@@ -1,0 +1,49 @@
+{
+  "entities": {
+    "Question": {
+      "title": "Question",
+      "description": "A single IGCSE assessment question",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "subject_code": { "type": "string" },
+        "topic": { "type": "string" },
+        "subtopic": { "type": "string" },
+        "question_text": { "type": "string" },
+        "question_type": { "type": "string" },
+        "marks": { "type": "number" },
+        "difficulty": { "type": "number" },
+        "answer": { "type": "object" },
+        "explanation": { "type": "object" },
+        "mark_scheme": { "type": "object" },
+        "esl_support": { "type": "object" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "subject_code", "question_text", "answer"]
+    },
+    "QuestionBank": {
+      "title": "Question Bank",
+      "description": "A collection of questions for a specific subject",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "subject_code": { "type": "string" },
+        "subject_name": { "type": "string" },
+        "total_questions": { "type": "number" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "user_id": { "type": "string" }
+      },
+      "required": ["id", "subject_code", "user_id"]
+    }
+  },
+  "firestore": {
+    "/question_banks/{bankId}": {
+      "schema": "QuestionBank",
+      "description": "User generated question banks"
+    },
+    "/question_banks/{bankId}/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Questions within a specific bank"
+    }
+  }
+}
