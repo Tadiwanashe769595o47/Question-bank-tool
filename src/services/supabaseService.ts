@@ -208,6 +208,9 @@ export async function pushQuestionsToSupabase(
       
       if (error) {
         let errorMessage = error.message;
+        if (error.details) errorMessage += ` (Details: ${error.details})`;
+        if (error.hint) errorMessage += ` (Hint: ${error.hint})`;
+        
         if (errorMessage.includes('row-level security policy')) {
           errorMessage = 'Row-Level Security (RLS) policy is blocking inserts. Please go to your Supabase Dashboard -> Authentication -> Policies, and create a policy that allows inserts for the "questions" table (e.g., "Enable insert for authenticated users only" or "Enable insert for all users" for testing).';
         }
@@ -217,11 +220,18 @@ export async function pushQuestionsToSupabase(
 
       processedCount++;
     } catch (err: any) {
-      let errorMessage = err.message || String(err);
+      let errorMessage = err?.message;
+      if (!errorMessage || errorMessage === 'Unknown error' || errorMessage === '[object Object]') {
+        try {
+          errorMessage = typeof err === 'object' ? JSON.stringify(err) : String(err);
+        } catch (e) {
+          errorMessage = String(err);
+        }
+      }
       if (errorMessage.includes('Bucket not found')) {
         errorMessage = 'Storage bucket "diagrams" not found. Please go to your Supabase Dashboard -> Storage, and create a new public bucket named "diagrams".';
       }
-      console.error(`Failed to process question ${i + 1}:`, errorMessage);
+      console.error(`Failed to process question ${i + 1}:`, err);
       failedCount++;
       errors.push(new Error(errorMessage));
       // We continue with the next question even if one fails

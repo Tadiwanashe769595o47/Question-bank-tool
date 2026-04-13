@@ -63,3 +63,11 @@ export interface QuestionBank {
   };
   questions: Question[];
 }
+
+export interface Draft {
+  id: string;
+  subjectCode: string;
+  subjectName: string;
+  date: string;
+  questions: Question[];
+}
