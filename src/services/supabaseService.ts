@@ -142,6 +142,7 @@ export interface HistoryRecord {
   difficulty: number;
   marks: number;
   question_text: string;
+  diagram_url: string | null;
 }
 
 /**
@@ -151,7 +152,7 @@ export async function fetchHistory(): Promise<HistoryRecord[]> {
   try {
     const { data, error } = await supabase
       .from('questions')
-      .select('id, subject_code, topic, subtopic, created_at, difficulty, marks, question_text')
+      .select('id, subject_code, topic, subtopic, created_at, difficulty, marks, question_text, diagram_url')
       .order('created_at', { ascending: false });
       
     if (error) throw error;
@@ -168,12 +169,13 @@ export async function fetchHistory(): Promise<HistoryRecord[]> {
 export async function pushQuestionsToSupabase(
   questions: Question[],
   onProgress?: (progress: number, message: string) => void
-): Promise<{ successCount: number, failedCount: number, errors: any[], successfulIndices: number[] }> {
+): Promise<{ successCount: number, failedCount: number, errors: any[], successfulIndices: number[], imageCount: number }> {
   console.log("Starting push to Supabase with", questions.length, "questions");
   let processedCount = 0;
   let failedCount = 0;
   let errors: any[] = [];
   let successfulIndices: number[] = [];
+  let imageCount = 0;
   const total = questions.length;
 
   if (total > 0) {
@@ -234,6 +236,9 @@ export async function pushQuestionsToSupabase(
         try {
           const pngBlob = await convertSvgToPngBlob(q._raw_svg);
           finalDiagramUrl = await uploadDiagram(pngBlob, q.topic, q.subject_code || 'unknown');
+          if (finalDiagramUrl) {
+            imageCount++;
+          }
         } catch (uploadErr: any) {
           console.warn(`Failed to upload diagram for question ${i + 1}, saving without diagram:`, uploadErr.message);
           finalDiagramUrl = null;
@@ -305,8 +310,8 @@ export async function pushQuestionsToSupabase(
     }
   }
 
-  console.log(`Push complete: ${processedCount} success, ${failedCount} failed`);
+  console.log(`Push complete: ${processedCount} success, ${failedCount} failed, ${imageCount} images`);
   onProgress?.(100, `Saved ${processedCount} questions. ${failedCount} failed (check console).`);
   
-  return { successCount: processedCount, failedCount, errors, successfulIndices };
+  return { successCount: processedCount, failedCount, errors, successfulIndices, imageCount };
 }

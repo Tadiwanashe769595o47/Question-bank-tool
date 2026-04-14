@@ -292,12 +292,13 @@ export default function App() {
       })).filter(draft => draft.questions.length > 0);
       saveDrafts(updatedDrafts);
       
+      const imageMsg = result.imageCount > 0 ? ` (${result.imageCount} with images)` : "";
       if (result.failedCount > 0) {
-        setSaveMessage(`Pushed ${result.successCount} questions. ${result.failedCount} failed.`);
-        alert(`Warning: ${result.failedCount} questions failed to push! They have been left in the Viewer so you can regenerate their missing diagrams and try pushing them again.`);
+        setSaveMessage(`Pushed ${result.successCount} questions${imageMsg}. ${result.failedCount} failed.`);
+        alert(`Results:\n• ${result.successCount} questions pushed${imageMsg}\n• ${result.failedCount} failed\n\nFailed questions left in Viewer - regenerate missing diagrams and try again.`);
       } else {
-        setSaveMessage("Successfully pushed all questions and diagrams to Supabase!");
-        alert("Successfully pushed all questions and diagrams to Supabase!");
+        setSaveMessage(`Successfully pushed ${result.successCount} questions${imageMsg} to Supabase!`);
+        alert(`Successfully pushed ${result.successCount} questions${imageMsg} to Supabase!`);
       }
     } catch (error: any) {
       console.error("Push failed - full error:", error);
@@ -984,20 +985,29 @@ export default function App() {
                           </span>
                         </h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {typedRecords.map(record => (
-                            <div key={record.id} className="p-4 bg-gray-50 rounded-xl border border-gray-100">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-[10px] font-black uppercase">
-                                  {record.subject_code}
-                                </span>
-                                <span className="text-[10px] font-bold text-gray-400">
-                                  {new Date(record.created_at).toLocaleTimeString()}
-                                </span>
+{typedRecords.map(record => (
+                              <div key={record.id} className="p-4 bg-gray-50 rounded-xl border border-gray-100">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-[10px] font-black uppercase">
+                                    {record.subject_code}
+                                  </span>
+                                  <span className="text-[10px] font-bold text-gray-400">
+                                    {new Date(record.created_at).toLocaleTimeString()}
+                                  </span>
+                                </div>
+                                <p className="text-xs font-bold text-gray-500 mb-1">{record.topic} › {record.subtopic}</p>
+                                <p className="text-sm font-medium text-gray-800 line-clamp-2">{record.question_text}</p>
+                                {record.diagram_url && (
+                                  <div className="mt-3 flex justify-center">
+                                    <img 
+                                      src={record.diagram_url} 
+                                      alt="Diagram" 
+                                      className="max-w-full max-h-32 rounded-lg border border-gray-200"
+                                    />
+                                  </div>
+                                )}
                               </div>
-                              <p className="text-xs font-bold text-gray-500 mb-1">{record.topic} › {record.subtopic}</p>
-                              <p className="text-sm font-medium text-gray-800 line-clamp-2">{record.question_text}</p>
-                            </div>
-                          ))}
+                            ))}
                         </div>
                       </div>
                     )})}

@@ -330,8 +330,6 @@ export async function generateQuestionsBatch(
 }
 
 export async function regenerateDiagramForQuestion(question: Question): Promise<string> {
-  const isOllama = shouldUseOllama();
-  
   const prompt = `
   You are an expert Cambridge IGCSE diagram generator.
   The following question requires a visual diagram, but the SVG code is missing.
@@ -341,46 +339,29 @@ export async function regenerateDiagramForQuestion(question: Question): Promise<
   
   Requirements:
   1. Generate ONLY the raw SVG code for this diagram.
-  2. Use a generous \`viewBox\` (e.g., \`0 0 500 500\`) and ensure no text or lines are cut off.
+  2. Use a generous viewBox (e.g., 0 0 500 500) and ensure no text or lines are cut off.
   3. Respond with perfectly valid XML <svg>...</svg>. DO NOT wrap it in a JSON object.
   4. Include the xmlns attribute xmlns="http://www.w3.org/2000/svg".
   5. DO NOT output any conversational text or markdown around the SVG. Just the raw XML string.
   `;
 
   try {
-    let rawText = "";
-    if (isOllama) {
-      const response = await fetch(`${getOllamaBaseUrl()}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: getOllamaModel(),
-          prompt: prompt,
-          stream: false,
-        }),
-      });
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) throw new Error("Gemini API key is required");
 
-      if (!response.ok) throw new Error(`Ollama API Error: ${response.status}`);
-      const data = await response.json();
-      rawText = data.response;
-    } else {
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("Gemini API key is required");
+    const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+    const response = await fetch(`${geminiUrl}?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1 }
+      })
+    });
 
-      const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-      const response = await fetch(`${geminiUrl}?key=${apiKey}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.1 }
-        })
-      });
-
-      if (!response.ok) throw new Error(`Gemini API Error: ${response.status}`);
-      const data = await response.json();
-      rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    }
+    if (!response.ok) throw new Error(`Gemini API Error: ${response.status}`);
+    const data = await response.json();
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
     let cleanSvg = rawText.trim();
     const match = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
