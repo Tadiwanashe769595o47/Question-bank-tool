@@ -272,34 +272,11 @@ export async function generateQuestionsBatch(
              throw new Error(`API error: ${response.status} ${response.statusText}`);
           }
 
-          const reader = response.body?.getReader();
-          if (!reader) throw new Error("No response body in stream");
-          const decoder = new TextDecoder();
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split('\n');
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
-                     const chunkText = data.candidates[0].content.parts[0].text;
-                     text += chunkText;
-                     const matches = [...text.matchAll(/"question_text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/g)];
-                     if (matches.length > 0) {
-                       const latestMatch = matches[matches.length - 1][1];
-                       if (latestMatch) {
-                         onPartialQuestion?.(latestMatch);
-                       }
-                     }
-                  }
-                } catch(e) {}
-              }
-            }
-          }
+          // The backend returns the complete question JSON as plain text — no SSE parsing needed.
+          text = await response.text();
+          // Signal a partial question update with the first question_text found, for live UI feedback
+          const previewMatch = text.match(/"question_text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/);
+          if (previewMatch?.[1]) onPartialQuestion?.(previewMatch[1]);
         }
 
         const cleanedText = text.replace(/```json/g, '').replace(/```/g, '').trim();

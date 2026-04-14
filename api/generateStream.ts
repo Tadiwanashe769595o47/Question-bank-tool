@@ -18,7 +18,9 @@ export default async function handler(req: Request) {
       });
     }
 
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${apiKey}`;
+    // Use non-streaming generateContent — batch size is 1 so it's fast enough,
+    // and this avoids the SSE JSON-fragment assembly bug entirely.
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
     const parts: any[] = [{ text: prompt }];
     if (diagramPreferences?.referenceImage) {
@@ -59,12 +61,14 @@ export default async function handler(req: Request) {
       });
     }
 
-    // Stream the SSE response directly back to the client
-    return new Response(response.body, {
+    // Return the full JSON response directly — no SSE parsing needed.
+    const data = await response.json();
+    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "[]";
+
+    return new Response(rawText, {
       headers: {
-        'Content-Type': 'text/event-stream',
+        'Content-Type': 'application/json',
         'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
       },
     });
 
@@ -75,3 +79,4 @@ export default async function handler(req: Request) {
     });
   }
 }
+
