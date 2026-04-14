@@ -22,7 +22,7 @@ import { cn } from "./lib/utils";
 import { SUBJECTS } from "./constants";
 import { Question, SyllabusConfirmation, QuestionBank, Subject, Draft } from "./types";
 import { generateQuestionsBatch, regenerateDiagramForQuestion } from "./services/gemini";
-import { pushQuestionsToSupabase, testSupabaseConnection, getExistingQuestionTexts, fetchHistory, HistoryRecord } from "./services/supabaseService";
+import { pushQuestionsToSupabase, testSupabaseConnection, getExistingQuestionTexts, fetchHistory, HistoryRecord, checkStorageBucket } from "./services/supabaseService";
 import { History, Calendar } from "lucide-react";
 
 export default function App() {
@@ -469,6 +469,24 @@ export default function App() {
             )} />
             {connectionStatus === 'connected' ? 'Supabase Connected' : 
              connectionStatus === 'error' ? 'Supabase Disconnected' : 'Checking Connection...'}
+          </div>
+
+          <div className={cn(
+            "hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium border",
+            storageStatus === 'ok' ? "bg-green-50 text-green-700 border-green-200" :
+            storageStatus === 'checking' ? "bg-gray-50 text-gray-700 border-gray-200" :
+            "bg-red-50 text-red-700 border-red-200"
+          )}>
+            <span className={cn(
+              "w-2 h-2 rounded-full",
+              storageStatus === 'ok' ? "bg-green-500" :
+              storageStatus === 'checking' ? "bg-gray-500 animate-pulse" :
+              "bg-red-500"
+            )} />
+            {storageStatus === 'ok' ? 'Storage Ready' : 
+             storageStatus === 'bucket_missing' ? 'Storage: Bucket Missing' :
+             storageStatus === 'policy_blocked' ? 'Storage: Policy Blocked' :
+             storageStatus === 'checking' ? 'Checking Storage...' : 'Storage Error'}
           </div>
           {selectedSubject && (
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-full text-sm font-medium">

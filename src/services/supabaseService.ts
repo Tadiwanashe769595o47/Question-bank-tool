@@ -10,9 +10,9 @@ async function convertSvgToPngBlob(svgString: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
     // Strip markdown formatting if AI provided it: e.g. ```xml <svg>... ```
     let cleanSvg = svgString;
-    const match = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
-    if (match) {
-      cleanSvg = match[0];
+    const svgMatch = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
+    if (svgMatch) {
+      cleanSvg = svgMatch[0];
     }
 
     // Critical fix: If the AI forgot the xmlns attribute, the browser Image element will silently fail to render the SVG!
@@ -20,48 +20,74 @@ async function convertSvgToPngBlob(svgString: string): Promise<Blob> {
       cleanSvg = cleanSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
     }
 
+    // Extract width/height from attributes or viewBox so the canvas has correct dimensions
+    let canvasW = 800;
+    let canvasH = 600;
+    const wMatch = cleanSvg.match(/\bwidth=["']([0-9.]+)/i);
+    const hMatch = cleanSvg.match(/\bheight=["']([0-9.]+)/i);
+    const vbMatch = cleanSvg.match(/viewBox=["']([0-9.\s-]+)/i);
+
+    if (wMatch && hMatch) {
+      canvasW = parseFloat(wMatch[1]) || 800;
+      canvasH = parseFloat(hMatch[1]) || 600;
+    } else if (vbMatch) {
+      const vbParts = vbMatch[1].trim().split(/[\s,]+/);
+      if (vbParts.length === 4) {
+        canvasW = parseFloat(vbParts[2]) || 800;
+        canvasH = parseFloat(vbParts[3]) || 600;
+      }
+    }
+
+    // If SVG has no explicit width/height, inject them so the Image element knows the intrinsic size
+    if (!wMatch || !hMatch) {
+      cleanSvg = cleanSvg.replace(/<svg/i, `<svg width="${canvasW}" height="${canvasH}"`);
+    }
+
     const canvas = document.createElement('canvas');
+    canvas.width = canvasW;
+    canvas.height = canvasH;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      return reject(new Error('Failed to get canvas context'));
+      return reject(new Error('Failed to get canvas 2D context'));
     }
 
     const img = new Image();
-    // Create a blob from the cleanly extracted SVG string
     const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(svgBlob);
 
+    // Add a hard timeout — if the browser doesn't fire onload in 8s the SVG is invalid
+    const timeout = setTimeout(() => {
+      URL.revokeObjectURL(url);
+      reject(new Error('SVG rendering timed out — the SVG code may be invalid or too complex.'));
+    }, 8000);
+
     img.onload = () => {
-      // Set canvas dimensions to match image
-      canvas.width = img.width || 800;
-      canvas.height = img.height || 600;
-      
+      clearTimeout(timeout);
       // Fill with white background
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
-      // Draw the SVG image
-      ctx.drawImage(img, 0, 0);
-      
-      // Convert to PNG blob
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+
       canvas.toBlob((blob) => {
-        URL.revokeObjectURL(url);
         if (blob) {
           resolve(blob);
         } else {
-          reject(new Error('Failed to convert canvas to blob'));
+          reject(new Error('canvas.toBlob() returned null — canvas may be tainted or empty'));
         }
       }, 'image/png');
     };
 
-    img.onerror = (err) => {
+    img.onerror = () => {
+      clearTimeout(timeout);
       URL.revokeObjectURL(url);
-      reject(new Error('Failed to load SVG into image element'));
+      reject(new Error('Browser failed to load the SVG as an image. The SVG code from the AI is likely invalid XML.'));
     };
 
     img.src = url;
   });
 }
+
 
 /**
  * Uploads a diagram to Supabase Storage and returns the public URL.
@@ -71,29 +97,40 @@ async function uploadDiagram(file: Blob, topic: string, subjectCode: string): Pr
   const uuid = Math.random().toString(36).substring(2, 15);
   const fileName = `${subjectCode}/${topicSlug}-${uuid}.png`;
   
-  try {
-    const { data, error } = await supabase.storage
-      .from('diagrams')
-      .upload(fileName, file, { upsert: false, contentType: 'image/png' });
+  console.log(`[Storage] Uploading diagram: diagrams/${fileName} (${Math.round(file.size / 1024)}KB)`);
+  
+  const { data, error } = await supabase.storage
+    .from('diagrams')
+    .upload(fileName, file, { upsert: false, contentType: 'image/png' });
+  
+  if (error) {
+    // Expose full error details for debugging
+    const errDetail = JSON.stringify({ message: error.message, name: (error as any).name, status: (error as any).status, statusCode: (error as any).statusCode });
+    console.error('[Storage] Upload error:', errDetail);
     
-    if (error) {
-      if (error.message?.includes('fetch failed') || error.message?.includes('connect')) {
-        throw new Error('Cannot connect to Supabase Storage. This may be a network/firewall issue, or the "diagrams" bucket may not exist. Please check: 1) Your firewall is not blocking storage.supabase.co, 2) The bucket "diagrams" exists in Supabase Dashboard -> Storage');
-      }
-      throw error;
+    if (error.message?.includes('Bucket not found') || (error as any).statusCode === 404) {
+      throw new Error(
+        'Storage bucket "diagrams" not found. ' +
+        'Go to Supabase Dashboard → Storage → New Bucket, create a PUBLIC bucket named "diagrams", ' +
+        'then go to Authentication → Policies → Storage and add an INSERT policy for anon users.'
+      );
     }
-    
-    const { data: { publicUrl } } = supabase.storage
-      .from('diagrams')
-      .getPublicUrl(fileName);
-    
-    return publicUrl;
-  } catch (err: any) {
-    if (err.message?.includes('Cannot connect to Supabase Storage')) {
-      throw err;
+    if ((error as any).statusCode === 403 || error.message?.includes('policy') || error.message?.includes('security')) {
+      throw new Error(
+        'Storage upload blocked by RLS policy (403). ' +
+        'Go to Supabase Dashboard → Authentication → Policies → Storage → diagrams bucket, ' +
+        'and add a policy: Role = anon, Operation = INSERT, USING = true.'
+      );
     }
-    throw new Error(`Storage upload failed: ${err.message}`);
+    throw new Error(`Storage upload failed: ${error.message}`);
   }
+  
+  const { data: { publicUrl } } = supabase.storage
+    .from('diagrams')
+    .getPublicUrl(fileName);
+  
+  console.log(`[Storage] Upload success: ${publicUrl}`);
+  return publicUrl;
 }
 
 /**
@@ -113,6 +150,29 @@ export async function testSupabaseConnection(): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Checks if the 'diagrams' storage bucket is accessible.
+ * Returns 'ok' | 'bucket_missing' | 'policy_blocked' | 'unknown_error'
+ */
+export async function checkStorageBucket(): Promise<'ok' | 'bucket_missing' | 'policy_blocked' | 'unknown_error'> {
+  try {
+    // Try listing top-level items — this costs no money but confirms bucket access
+    const { data, error } = await supabase.storage.from('diagrams').list('', { limit: 1 });
+    if (!error) return 'ok';
+
+    const statusCode = (error as any).statusCode;
+    const msg = error.message || '';
+    if (statusCode === 404 || msg.includes('Bucket not found') || msg.includes('not found')) return 'bucket_missing';
+    if (statusCode === 403 || msg.includes('policy') || msg.includes('denied')) return 'policy_blocked';
+    console.error('[Storage] checkStorageBucket error:', JSON.stringify(error));
+    return 'unknown_error';
+  } catch (e) {
+    console.error('[Storage] checkStorageBucket threw:', e);
+    return 'unknown_error';
+  }
+}
+
 
 /**
  * Fetches recent questions to prevent duplicates.
