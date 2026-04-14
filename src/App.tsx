@@ -16,10 +16,14 @@ import {
   Save,
   Pencil,
   Trash2,
+  RefreshCw
+} from "lucide-react";
+import { cn } from "./lib/utils";
+import { SUBJECTS } from "./constants";
 import { Question, SyllabusConfirmation, QuestionBank, Subject, Draft } from "./types";
 import { generateQuestionsBatch, regenerateDiagramForQuestion } from "./services/gemini";
 import { pushQuestionsToSupabase, testSupabaseConnection, getExistingQuestionTexts, fetchHistory, HistoryRecord } from "./services/supabaseService";
-import { History, Calendar, RefreshCw } from "lucide-react";
+import { History, Calendar } from "lucide-react";
 
 export default function App() {
   const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
