@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { Question } from '../types';
 import { SUBJECTS } from '../constants';
+import { regenerateDiagramForQuestion } from './gemini';
 
 /**
  * Converts an SVG string to a PNG Blob.
@@ -223,7 +224,17 @@ export async function pushQuestionsToSupabase(
                            (q.question_text.toLowerCase().includes('diagram') || q.question_text.toLowerCase().includes('figure'));
       
       if (needsDiagram && !q._raw_svg && !finalDiagramUrl) {
-        throw new Error("Missing SVG: This question requires a diagram, but the AI failed to generate the SVG code. Please regenerate the diagram.");
+        console.warn(`Missing SVG for question ${i + 1}. Attempting automatic regeneration...`);
+        onProgress?.(
+          Math.round(((i) / total) * 100),
+          `Auto-recovering missing diagram for question ${i + 1}...`
+        );
+        try {
+          q._raw_svg = await regenerateDiagramForQuestion(q);
+        } catch (regenError: any) {
+          console.warn(`Failed to auto-recover diagram for question ${i + 1}:`, regenError.message);
+          // We swallow the error so that the question is pushed "no excuses", just without a diagram.
+        }
       }
 
       // If there's a raw SVG, convert and upload it
@@ -263,11 +274,11 @@ export async function pushQuestionsToSupabase(
           model_answer: q.model_answer,
           explanation_json: q.explanation_json,
           key_points_json: q.key_points_json,
-          marks: q.marks,
+          marks: q.marks != null ? Math.round(Number(q.marks)) : null,
           diagram_url: finalDiagramUrl || null,
           diagram_type: q.diagram_type || null,
-          difficulty: q.difficulty,
-          time_estimate: q.time_estimate,
+          difficulty: q.difficulty != null ? Math.round(Number(q.difficulty)) : null,
+          time_estimate: q.time_estimate != null ? Math.round(Number(q.time_estimate)) : null,
           source: 'research-agent'
         });
       

@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { Type } from "@google/genai";
 import { Question, SyllabusConfirmation } from "../types";
 import { db, auth } from "../lib/firebase";
 import { collection, doc, setDoc, writeBatch } from "firebase/firestore";
@@ -8,8 +8,6 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const useOllama = import.meta.env.VITE_USE_OLLAMA === "true";
 const ollamaBaseUrl = import.meta.env.VITE_OLLAMA_BASE_URL || "http://localhost:11434";
 const ollamaModel = import.meta.env.VITE_OLLAMA_MODEL || "gemma";
-
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
 
 async function* ollamaGenerateContentStream(prompt: string, onPartialQuestion?: (partialText: string) => void) {
   const response = await fetch(`${ollamaBaseUrl}/api/generate`, {
@@ -99,27 +97,32 @@ export async function verifySyllabus(subjectName: string, subjectCode: string, c
     Return the result in JSON format.
   `;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-flash-latest",
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          subject: { type: Type.STRING },
-          code: { type: Type.STRING },
-          verified: { type: Type.BOOLEAN },
-          topics_matched: { type: Type.ARRAY, items: { type: Type.STRING } },
-          gaps_identified: { type: Type.ARRAY, items: { type: Type.STRING } },
-          recommendations: { type: Type.ARRAY, items: { type: Type.STRING } }
-        },
-        required: ["subject", "code", "verified", "topics_matched", "gaps_identified", "recommendations"]
-      }
-    }
+  const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      subject: { type: Type.STRING },
+      code: { type: Type.STRING },
+      verified: { type: Type.BOOLEAN },
+      topics_matched: { type: Type.ARRAY, items: { type: Type.STRING } },
+      gaps_identified: { type: Type.ARRAY, items: { type: Type.STRING } },
+      recommendations: { type: Type.ARRAY, items: { type: Type.STRING } }
+    },
+    required: ["subject", "code", "verified", "topics_matched", "gaps_identified", "recommendations"]
+  };
+
+  const response = await fetch('/api/verifySyllabus', {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, responseSchema })
   });
 
-  return JSON.parse(response.text);
+  if (!response.ok) {
+    throw new Error(`Failed to verify syllabus: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+  return JSON.parse(rawText);
 }
 
 export async function generateQuestionsBatch(
@@ -216,51 +219,71 @@ export async function generateQuestionsBatch(
             text += chunk.text;
           }
         } else {
-          const responseStream = await ai.models.generateContentStream({
-            model: "gemini-2.5-flash",
-            contents: { parts },
-            config: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: Type.ARRAY,
-                items: {
+          const responseSchema = {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                topic: { type: Type.STRING },
+                subtopic: { type: Type.STRING },
+                question_text: { type: Type.STRING },
+                question_type: { type: Type.STRING },
+                options_json: { type: Type.ARRAY, items: { type: Type.STRING } },
+                correct_answer: { type: Type.STRING },
+                model_answer: { type: Type.STRING },
+                explanation_json: {
                   type: Type.OBJECT,
                   properties: {
-                    topic: { type: Type.STRING },
-                    subtopic: { type: Type.STRING },
-                    question_text: { type: Type.STRING },
-                    question_type: { type: Type.STRING },
-                    options_json: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    correct_answer: { type: Type.STRING },
-                    model_answer: { type: Type.STRING },
-                    explanation_json: {
-                      type: Type.OBJECT,
-                      properties: {
-                        why_correct: { type: Type.STRING },
-                        key_understanding: { type: Type.STRING }
-                      }
-                    },
-                    key_points_json: { type: Type.ARRAY, items: { type: Type.STRING } },
-                    marks: { type: Type.NUMBER },
-                    diagram_url: { type: Type.STRING },
-                    diagram_type: { type: Type.STRING },
-                    _raw_svg: { type: Type.STRING },
-                    difficulty: { type: Type.NUMBER },
-                    time_estimate: { type: Type.NUMBER }
+                    why_correct: { type: Type.STRING },
+                    key_understanding: { type: Type.STRING }
                   }
-                }
+                },
+                key_points_json: { type: Type.ARRAY, items: { type: Type.STRING } },
+                marks: { type: Type.NUMBER },
+                diagram_url: { type: Type.STRING },
+                diagram_type: { type: Type.STRING },
+                _raw_svg: { type: Type.STRING },
+                difficulty: { type: Type.NUMBER },
+                time_estimate: { type: Type.NUMBER }
               }
             }
+          };
+
+          const response = await fetch('/api/generateStream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt, diagramPreferences, responseSchema })
           });
 
-          for await (const chunk of responseStream) {
-            text += chunk.text;
-            
-            const matches = [...text.matchAll(/"question_text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/g)];
-            if (matches.length > 0) {
-              const latestMatch = matches[matches.length - 1][1];
-              if (latestMatch) {
-                onPartialQuestion?.(latestMatch);
+          if (!response.ok) {
+             throw new Error(`API error: ${response.status} ${response.statusText}`);
+          }
+
+          const reader = response.body?.getReader();
+          if (!reader) throw new Error("No response body in stream");
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
+                     const chunkText = data.candidates[0].content.parts[0].text;
+                     text += chunkText;
+                     const matches = [...text.matchAll(/"question_text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/g)];
+                     if (matches.length > 0) {
+                       const latestMatch = matches[matches.length - 1][1];
+                       if (latestMatch) {
+                         onPartialQuestion?.(latestMatch);
+                       }
+                     }
+                  }
+                } catch(e) {}
               }
             }
           }
@@ -346,20 +369,13 @@ export async function regenerateDiagramForQuestion(question: Question): Promise<
   `;
 
   try {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    if (!apiKey) throw new Error("Gemini API key is required");
-
-    const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
-    const response = await fetch(`${geminiUrl}?key=${apiKey}`, {
+    const response = await fetch('/api/regenerateDiagram', {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1 }
-      })
+      body: JSON.stringify({ prompt })
     });
 
-    if (!response.ok) throw new Error(`Gemini API Error: ${response.status}`);
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
@@ -379,4 +395,3 @@ export async function regenerateDiagramForQuestion(question: Question): Promise<
     throw err;
   }
 }
-
