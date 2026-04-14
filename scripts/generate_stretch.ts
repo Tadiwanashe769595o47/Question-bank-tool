@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const ai = new GoogleGenAI({ apiKey: process.env.VITE_GEMINI_API_KEY || "" });
 
 const subjects = [
   { name: "Mathematics", code: "0580" },
@@ -38,7 +38,7 @@ async function generateStretchQuestions(subject: { name: string, code: string })
   `;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-2.5-flash",
     contents: prompt,
     config: {
       responseMimeType: "application/json",
