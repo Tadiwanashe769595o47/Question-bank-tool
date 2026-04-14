@@ -16,14 +16,10 @@ import {
   Save,
   Pencil,
   Trash2,
-  RefreshCw
-} from "lucide-react";
-import { cn } from "./lib/utils";
-import { SUBJECTS } from "./constants";
-import { Question, SyllabusConfirmation, QuestionBank, Subject } from "./types";
+import { Question, SyllabusConfirmation, QuestionBank, Subject, Draft } from "./types";
 import { generateQuestionsBatch, regenerateDiagramForQuestion } from "./services/gemini";
 import { pushQuestionsToSupabase, testSupabaseConnection, getExistingQuestionTexts, fetchHistory, HistoryRecord } from "./services/supabaseService";
-import { History, Calendar } from "lucide-react";
+import { History, Calendar, RefreshCw } from "lucide-react";
 
 export default function App() {
   const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
@@ -42,8 +38,8 @@ export default function App() {
   const [currentStreamedQuestion, setCurrentStreamedQuestion] = useState("");
   const [isPushed, setIsPushed] = useState(false);
   
-  // Local drafts state
-  const [drafts, setDrafts] = useState<Question[]>([]);
+  // Drafts state
+  const [drafts, setDrafts] = useState<Draft[]>([]);
   const [editingQuestion, setEditingQuestion] = useState<{index: number; question: Question} | null>(null);
   
   // History state
@@ -58,28 +54,26 @@ export default function App() {
     testSupabaseConnection().then(success => {
       setConnectionStatus(success ? 'connected' : 'error');
     });
-  }, []);
-
-  // Load drafts from localStorage on mount
-  useEffect(() => {
-    const savedDrafts = localStorage.getItem('questionDrafts');
+    
+    // Load drafts from local storage
+    const savedDrafts = localStorage.getItem('question_drafts');
     if (savedDrafts) {
       try {
         setDrafts(JSON.parse(savedDrafts));
       } catch (e) {
-        console.error('Failed to load drafts', e);
+        console.error("Failed to parse drafts", e);
       }
     }
   }, []);
 
-  const saveDrafts = (questions: Question[]) => {
-    setDrafts(questions);
-    localStorage.setItem('questionDrafts', JSON.stringify(questions));
+  const saveDrafts = (updatedDrafts: Draft[]) => {
+    setDrafts(updatedDrafts);
+    localStorage.setItem('question_drafts', JSON.stringify(updatedDrafts));
   };
 
   const clearDrafts = () => {
     setDrafts([]);
-    localStorage.removeItem('questionDrafts');
+    localStorage.removeItem('question_drafts');
   };
 
   const importQuestions = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -92,16 +86,20 @@ export default function App() {
         const data = JSON.parse(event.target?.result as string);
         const importedQuestions = data.questions || data;
         
+        // Wrap imported questions in a Draft if needed
         if (Array.isArray(importedQuestions)) {
-          const newDrafts = [...drafts, ...importedQuestions];
+          const newDraft: Draft = {
+            id: Date.now().toString(),
+            subjectCode: selectedSubject?.code || 'unknown',
+            subjectName: selectedSubject?.name || 'Imported Questions',
+            date: new Date().toISOString(),
+            questions: importedQuestions
+          };
+          const newDrafts = [newDraft, ...drafts];
           saveDrafts(newDrafts);
-          alert(`Imported ${importedQuestions.length} questions!`);
-        } else if (importedQuestions.metadata?.questions) {
-          const newDrafts = [...drafts, ...importedQuestions.questions];
-          saveDrafts(newDrafts);
-          alert(`Imported ${importedQuestions.questions.length} questions!`);
+          alert(`Imported ${importedQuestions.length} questions to drafts!`);
         } else {
-          alert('Invalid file format');
+          alert('Invalid file format. Expected a JSON array of questions.');
         }
       } catch (err) {
         alert('Failed to parse file: ' + err);
@@ -159,13 +157,17 @@ export default function App() {
         setQuestions(newQuestions);
       }
       
-      // Update in drafts
-      const newDrafts = [...drafts];
-      const draftIndex = drafts.findIndex(d => d.question_text === question.question_text);
-      if (draftIndex !== -1) {
-        newDrafts[draftIndex] = { ...newDrafts[draftIndex], _raw_svg: newSvg };
-        saveDrafts(newDrafts);
-      }
+      // Update in drafts sessions if this question exists in any of them
+      const newDrafts = drafts.map(draft => {
+        const qIndex = draft.questions.findIndex(q => q.question_text === question.question_text);
+        if (qIndex !== -1) {
+          const updatedQuestions = [...draft.questions];
+          updatedQuestions[qIndex] = { ...updatedQuestions[qIndex], _raw_svg: newSvg };
+          return { ...draft, questions: updatedQuestions };
+        }
+        return draft;
+      });
+      saveDrafts(newDrafts);
       
       alert("Diagram regenerated successfully!");
     } catch (err: any) {
@@ -210,14 +212,16 @@ export default function App() {
         }
       );
       
-      // Auto-save generated questions to drafts to prevent loss
+      // Auto-save generated questions to a new draft session to prevent loss
       if (generatedQuestions && generatedQuestions.length > 0) {
-        const savedDrafts = localStorage.getItem('questionDrafts');
-        let d = [];
-        if (savedDrafts) {
-          try { d = JSON.parse(savedDrafts); } catch (e) {}
-        }
-        saveDrafts([...d, ...generatedQuestions]);
+        const newDraft: Draft = {
+          id: Date.now().toString(),
+          subjectCode: selectedSubject.code,
+          subjectName: selectedSubject.name,
+          date: new Date().toISOString(),
+          questions: generatedQuestions
+        };
+        saveDrafts([newDraft, ...drafts]);
       }
       
     } catch (error) {
@@ -257,20 +261,32 @@ export default function App() {
       });
       
       if (result.successCount === 0) {
-        const errorMsg = result.errors[0]?.message || result.errors[0] || "Unknown error";
+        const firstError = result.errors[0];
+        let errorMsg = firstError?.message || firstError;
+        if (typeof errorMsg === 'object') {
+          try {
+            errorMsg = JSON.stringify(errorMsg);
+          } catch (e) {
+            errorMsg = String(errorMsg);
+          }
+        }
         throw new Error(`Failed to push any questions. Error: ${errorMsg}`);
       }
 
       setIsPushed(true);
       
-      // Remove successfully pushed questions from active view and drafts
+      // Remove successfully pushed questions from active view
       const successfulIds = new Set(result.successfulIndices);
       const remainingQuestions = targetQuestions.filter((_, i) => !successfulIds.has(i));
       setQuestions(remainingQuestions);
       
-      // Also filter them out of drafts (using question_text as proxy)
+      // Also filter them out of any draft sessions (using question_text as proxy)
       const successfullyPushedTexts = new Set(targetQuestions.filter((_, i) => successfulIds.has(i)).map(q => q.question_text));
-      saveDrafts(drafts.filter(d => !successfullyPushedTexts.has(d.question_text)));
+      const updatedDrafts = drafts.map(draft => ({
+        ...draft,
+        questions: draft.questions.filter(q => !successfullyPushedTexts.has(q.question_text))
+      })).filter(draft => draft.questions.length > 0);
+      saveDrafts(updatedDrafts);
       
       if (result.failedCount > 0) {
         setSaveMessage(`Pushed ${result.successCount} questions. ${result.failedCount} failed.`);
@@ -289,6 +305,36 @@ export default function App() {
       setIsSaving(false);
       setSaveProgress(100);
     }
+  };
+
+  const saveDraft = () => {
+    if (!selectedSubject || questions.length === 0) return;
+    const newDraft: Draft = {
+      id: Date.now().toString(),
+      subjectCode: selectedSubject.code,
+      subjectName: selectedSubject.name,
+      date: new Date().toISOString(),
+      questions: questions
+    };
+    saveDrafts([newDraft, ...drafts]);
+    alert("Saved to drafts! You can access it later from the dashboard.");
+  };
+
+  const loadDraft = (draft: Draft) => {
+    const subject = SUBJECTS.find(s => s.code === draft.subjectCode);
+    if (subject) {
+      setSelectedSubject(subject);
+      setQuestions(draft.questions);
+      setView('viewer');
+      setIsPushed(false);
+    } else {
+      alert("Could not find the subject for this draft.");
+    }
+  };
+
+  const deleteDraft = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    saveDrafts(drafts.filter(d => d.id !== id));
   };
 
   const downloadJSON = () => {
@@ -322,11 +368,13 @@ export default function App() {
   const exportAllDrafts = () => {
     if (drafts.length === 0) return;
     
-    // Group drafts by subject_code
-    const grouped = drafts.reduce((acc, q) => {
-      const code = q.subject_code || 'unknown';
-      if (!acc[code]) acc[code] = [];
-      acc[code].push(q);
+    // Group all questions from all drafts by subject_code
+    const grouped = drafts.reduce((acc, draft) => {
+      draft.questions.forEach(q => {
+        const code = draft.subjectCode || 'unknown';
+        if (!acc[code]) acc[code] = [];
+        acc[code].push(q);
+      });
       return acc;
     }, {} as Record<string, Question[]>);
 
@@ -452,6 +500,43 @@ export default function App() {
                   </motion.button>
                 ))}
               </div>
+
+              {drafts.length > 0 && (
+                <div className="mt-16">
+                  <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-2xl font-black tracking-tight text-gray-900">Saved Drafts</h2>
+                    <span className="text-sm font-medium text-gray-500 bg-gray-100 px-3 py-1 rounded-full">{drafts.length} Drafts</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {drafts.map(draft => (
+                      <motion.div
+                        key={draft.id}
+                        whileHover={{ scale: 1.02 }}
+                        className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-all cursor-pointer relative group"
+                        onClick={() => loadDraft(draft)}
+                      >
+                        <button 
+                          onClick={(e) => deleteDraft(draft.id, e)}
+                          className="absolute top-4 right-4 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                          title="Delete draft"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <div className="flex items-center gap-2 mb-3">
+                          <span className="px-2 py-1 bg-amber-100 text-amber-800 rounded text-[10px] font-black uppercase">Draft</span>
+                          <span className="text-xs font-bold text-gray-400">{draft.subjectCode}</span>
+                        </div>
+                        <h3 className="text-lg font-bold mb-1">{draft.subjectName}</h3>
+                        <p className="text-sm text-gray-500 mb-4">{draft.questions.length} questions generated</p>
+                        <div className="flex items-center text-xs text-gray-400 font-medium">
+                          <Calendar className="w-3 h-3 mr-1" />
+                          {new Date(draft.date).toLocaleDateString()} at {new Date(draft.date).toLocaleTimeString()}
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -625,6 +710,12 @@ export default function App() {
                       <Eye className="w-5 h-5" /> Preview Questions
                     </button>
                     <button
+                      onClick={saveDraft}
+                      className="px-6 py-3 bg-amber-500 text-white rounded-xl font-bold shadow-lg shadow-amber-200 hover:bg-amber-600 transition-all flex items-center gap-2"
+                    >
+                      <Save className="w-5 h-5" /> Save to Drafts
+                    </button>
+                    <button
                       onClick={handlePushToSupabase}
                       disabled={isSaving || isPushed}
                       className={cn(
@@ -676,6 +767,12 @@ export default function App() {
                   <ArrowLeft className="w-4 h-4 mr-2" /> Back to Dashboard
                 </button>
                 <div className="flex gap-3">
+                  <button
+                    onClick={saveDraft}
+                    className="px-4 py-2 bg-amber-500 text-white rounded-lg font-bold text-sm shadow-md hover:bg-amber-600 transition-all flex items-center gap-2"
+                  >
+                    <Save className="w-4 h-4" /> Save Draft
+                  </button>
                   <button
                     onClick={handlePushToSupabase}
                     disabled={isSaving || isPushed}
