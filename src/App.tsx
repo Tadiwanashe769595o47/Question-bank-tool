@@ -56,10 +56,14 @@ export default function App() {
   // Abort controller for terminating generation
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // Storage bucket health status
+  const [storageStatus, setStorageStatus] = useState<'checking' | 'ok' | 'bucket_missing' | 'policy_blocked' | 'unknown_error'>('checking');
+
   useEffect(() => {
     testSupabaseConnection().then(success => {
       setConnectionStatus(success ? 'connected' : 'error');
     });
+    checkStorageBucket().then(status => setStorageStatus(status));
     
     // Load drafts from local storage
     const savedDrafts = localStorage.getItem('question_drafts');
