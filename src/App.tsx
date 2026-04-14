@@ -12,12 +12,16 @@ import {
   ArrowLeft,
   Eye,
   Settings,
-  Database
+  Database,
+  Save,
+  Pencil,
+  Trash2,
+  RefreshCw
 } from "lucide-react";
 import { cn } from "./lib/utils";
 import { SUBJECTS } from "./constants";
 import { Question, SyllabusConfirmation, QuestionBank, Subject } from "./types";
-import { generateQuestionsBatch } from "./services/gemini";
+import { generateQuestionsBatch, regenerateDiagramForQuestion } from "./services/gemini";
 import { pushQuestionsToSupabase, testSupabaseConnection, getExistingQuestionTexts, fetchHistory, HistoryRecord } from "./services/supabaseService";
 import { History, Calendar } from "lucide-react";
 
@@ -27,7 +31,7 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationMessage, setGenerationMessage] = useState("");
-  const [view, setView] = useState<'dashboard' | 'config' | 'generator' | 'viewer' | 'history'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'config' | 'generator' | 'viewer' | 'history' | 'drafts'>('dashboard');
   const [questionCount, setQuestionCount] = useState(20);
   const [diagramType, setDiagramType] = useState('Auto');
   const [referenceImage, setReferenceImage] = useState<{data: string, mimeType: string} | null>(null);
@@ -38,16 +42,74 @@ export default function App() {
   const [currentStreamedQuestion, setCurrentStreamedQuestion] = useState("");
   const [isPushed, setIsPushed] = useState(false);
   
+  // Local drafts state
+  const [drafts, setDrafts] = useState<Question[]>([]);
+  const [editingQuestion, setEditingQuestion] = useState<{index: number; question: Question} | null>(null);
+  
   // History state
   const [historyData, setHistoryData] = useState<HistoryRecord[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historySubjectFilter, setHistorySubjectFilter] = useState<string>('ALL');
+
+  // Regeneration state
+  const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
 
   useEffect(() => {
     testSupabaseConnection().then(success => {
       setConnectionStatus(success ? 'connected' : 'error');
     });
   }, []);
+
+  // Load drafts from localStorage on mount
+  useEffect(() => {
+    const savedDrafts = localStorage.getItem('questionDrafts');
+    if (savedDrafts) {
+      try {
+        setDrafts(JSON.parse(savedDrafts));
+      } catch (e) {
+        console.error('Failed to load drafts', e);
+      }
+    }
+  }, []);
+
+  const saveDrafts = (questions: Question[]) => {
+    setDrafts(questions);
+    localStorage.setItem('questionDrafts', JSON.stringify(questions));
+  };
+
+  const clearDrafts = () => {
+    setDrafts([]);
+    localStorage.removeItem('questionDrafts');
+  };
+
+  const importQuestions = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        const importedQuestions = data.questions || data;
+        
+        if (Array.isArray(importedQuestions)) {
+          const newDrafts = [...drafts, ...importedQuestions];
+          saveDrafts(newDrafts);
+          alert(`Imported ${importedQuestions.length} questions!`);
+        } else if (importedQuestions.metadata?.questions) {
+          const newDrafts = [...drafts, ...importedQuestions.questions];
+          saveDrafts(newDrafts);
+          alert(`Imported ${importedQuestions.questions.length} questions!`);
+        } else {
+          alert('Invalid file format');
+        }
+      } catch (err) {
+        alert('Failed to parse file: ' + err);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -85,6 +147,34 @@ export default function App() {
     loadHistory();
   };
 
+  const handleRegenerateDiagram = async (index: number, question: Question) => {
+    setRegeneratingIndex(index);
+    try {
+      const newSvg = await regenerateDiagramForQuestion(question);
+      
+      // Update in active questions list if present
+      const newQuestions = [...questions];
+      if (newQuestions[index]?.question_text === question.question_text) {
+        newQuestions[index] = { ...newQuestions[index], _raw_svg: newSvg };
+        setQuestions(newQuestions);
+      }
+      
+      // Update in drafts
+      const newDrafts = [...drafts];
+      const draftIndex = drafts.findIndex(d => d.question_text === question.question_text);
+      if (draftIndex !== -1) {
+        newDrafts[draftIndex] = { ...newDrafts[draftIndex], _raw_svg: newSvg };
+        saveDrafts(newDrafts);
+      }
+      
+      alert("Diagram regenerated successfully!");
+    } catch (err: any) {
+      alert("Failed to regenerate diagram: " + (err.message || String(err)));
+    } finally {
+      setRegeneratingIndex(null);
+    }
+  };
+
   const startGeneration = async () => {
     if (!selectedSubject) return;
     setView('generator');
@@ -119,6 +209,17 @@ export default function App() {
           setCurrentStreamedQuestion(partialText);
         }
       );
+      
+      // Auto-save generated questions to drafts to prevent loss
+      if (generatedQuestions && generatedQuestions.length > 0) {
+        const savedDrafts = localStorage.getItem('questionDrafts');
+        let d = [];
+        if (savedDrafts) {
+          try { d = JSON.parse(savedDrafts); } catch (e) {}
+        }
+        saveDrafts([...d, ...generatedQuestions]);
+      }
+      
     } catch (error) {
       console.error("Generation failed", error);
       setGenerationMessage("An error occurred during generation.");
@@ -127,9 +228,18 @@ export default function App() {
     }
   };
 
-  const handlePushToSupabase = async (questionsToPush?: Question[]) => {
-    const targetQuestions = questionsToPush || questions;
-    if (!selectedSubject || targetQuestions.length === 0) return;
+  const handlePushToSupabase = async (questionsToPush?: Question[] | React.MouseEvent | any) => {
+    // If called directly from an onClick, ignore the React event object and use state
+    const isEvent = questionsToPush && (questionsToPush as any).nativeEvent;
+    const targetQuestions = (!questionsToPush || isEvent) ? questions : questionsToPush;
+    console.log("Push attempt - subject:", selectedSubject, "questions:", targetQuestions.length);
+    console.log("Supabase URL:", import.meta.env.VITE_SUPABASE_URL);
+    console.log("Supabase Key exists:", !!import.meta.env.VITE_SUPABASE_ANON_KEY);
+    
+    if (!selectedSubject || targetQuestions.length === 0) {
+      alert("No subject selected or no questions to push");
+      return;
+    }
     
     if (!import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY') {
       alert("Please configure your Supabase Anon Key in the environment variables first.");
@@ -140,6 +250,7 @@ export default function App() {
     setSaveProgress(0);
     setSaveMessage("Starting upload...");
     try {
+      console.log("Calling pushQuestionsToSupabase...");
       const result = await pushQuestionsToSupabase(targetQuestions, (progress, message) => {
         setSaveProgress(progress);
         setSaveMessage(message);
@@ -152,17 +263,28 @@ export default function App() {
 
       setIsPushed(true);
       
+      // Remove successfully pushed questions from active view and drafts
+      const successfulIds = new Set(result.successfulIndices);
+      const remainingQuestions = targetQuestions.filter((_, i) => !successfulIds.has(i));
+      setQuestions(remainingQuestions);
+      
+      // Also filter them out of drafts (using question_text as proxy)
+      const successfullyPushedTexts = new Set(targetQuestions.filter((_, i) => successfulIds.has(i)).map(q => q.question_text));
+      saveDrafts(drafts.filter(d => !successfullyPushedTexts.has(d.question_text)));
+      
       if (result.failedCount > 0) {
         setSaveMessage(`Pushed ${result.successCount} questions. ${result.failedCount} failed.`);
-        alert(`Warning: ${result.failedCount} questions failed to push. Check console for details.`);
+        alert(`Warning: ${result.failedCount} questions failed to push! They have been left in the Viewer so you can regenerate their missing diagrams and try pushing them again.`);
       } else {
         setSaveMessage("Successfully pushed all questions and diagrams to Supabase!");
         alert("Successfully pushed all questions and diagrams to Supabase!");
       }
     } catch (error: any) {
-      console.error("Push failed", error);
+      console.error("Push failed - full error:", error);
+      console.error("Error message:", error?.message);
+      console.error("Error stack:", error?.stack);
       setSaveMessage("Failed to push to Supabase. Check console for details.");
-      alert(`Failed to push to Supabase:\n${error.message || error}`);
+      alert(`Failed to push to Supabase:\n${error?.message || error}\n\nCheck console (F12) for full details.`);
     } finally {
       setIsSaving(false);
       setSaveProgress(100);
@@ -171,6 +293,7 @@ export default function App() {
 
   const downloadJSON = () => {
     if (!selectedSubject) return;
+    const safeName = selectedSubject.name.replace(/[^a-zA-Z0-9]/g, '_');
     const exportData = {
       metadata: {
         version: "1.0",
@@ -180,7 +303,7 @@ export default function App() {
         total_questions: questions.length
       },
       questions: questions.map(q => {
-        const { _raw_svg, id, ...rest } = q;
+        const { id, ...rest } = q;
         return {
           subject_code: selectedSubject.code,
           ...rest
@@ -192,7 +315,49 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `IGCSE_${selectedSubject.code}_Bank.json`;
+    a.download = `IGCSE_${safeName}_${selectedSubject.code}_Bank.json`;
+    a.click();
+  };
+
+  const exportAllDrafts = () => {
+    if (drafts.length === 0) return;
+    
+    // Group drafts by subject_code
+    const grouped = drafts.reduce((acc, q) => {
+      const code = q.subject_code || 'unknown';
+      if (!acc[code]) acc[code] = [];
+      acc[code].push(q);
+      return acc;
+    }, {} as Record<string, Question[]>);
+
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Create a zip-like structure with multiple files
+    let allExports = '';
+    Object.entries(grouped).forEach(([code, questions]: [string, Question[]]) => {
+      const subjectName = SUBJECTS.find(s => s.code === code)?.name || code;
+      const exportData = {
+        metadata: {
+          version: "1.0",
+          subject_code: code,
+          subject_name: subjectName,
+          generated_date: today,
+          total_questions: questions.length
+        },
+        questions: questions.map(q => {
+          const { id, ...rest } = q;
+          return rest;
+        })
+      };
+      allExports += `\n\n=== ${code} - ${subjectName} ===\n`;
+      allExports += JSON.stringify(exportData, null, 2);
+    });
+
+    const blob = new Blob([allExports], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `QuestionBank_Export_${today}.json`;
     a.click();
   };
 
@@ -328,8 +493,8 @@ export default function App() {
                           onChange={(e) => setQuestionCount(Number(e.target.value))}
                           className="bg-white border border-blue-200 rounded-lg px-3 py-2 text-sm font-bold text-blue-700 outline-none focus:ring-2 focus:ring-blue-500"
                         >
-                          {[10, 20, 40, 60, 80, 100].map(n => (
-                            <option key={n} value={n}>{n} Questions</option>
+                          {[1, 2, 5, 10, 20, 40, 60, 80, 100].map(n => (
+                            <option key={n} value={n}>{n} Question{n !== 1 ? 's' : ''}</option>
                           ))}
                         </select>
                       </div>
@@ -476,6 +641,19 @@ export default function App() {
                     >
                       <Download className="w-5 h-5" /> Download JSON
                     </button>
+                    <button
+                      onClick={() => { saveDrafts(questions); alert('Saved to drafts!'); }}
+                      disabled={questions.length === 0}
+                      className="px-6 py-3 bg-amber-500 text-white rounded-xl font-bold shadow-lg shadow-amber-200 hover:bg-amber-600 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Save className="w-5 h-5" /> Save as Draft
+                    </button>
+                    <button
+                      onClick={() => setView('drafts')}
+                      className="px-6 py-3 bg-gray-600 text-white rounded-xl font-bold shadow-lg shadow-gray-200 hover:bg-gray-700 transition-all flex items-center gap-2"
+                    >
+                      <Eye className="w-5 h-5" /> View Drafts ({drafts.length})
+                    </button>
                   </>
                 )}
               </div>
@@ -564,12 +742,26 @@ export default function App() {
                           </div>
                         )}
 
-                        {q._raw_svg && (
-                          <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                            <div 
-                              className="w-full min-h-[300px] flex items-center justify-center overflow-hidden [&>svg]:max-w-full [&>svg]:max-h-[500px] [&>svg]:h-auto"
-                              dangerouslySetInnerHTML={{ __html: q._raw_svg }}
-                            />
+                        {(q._raw_svg || (q.diagram_type && q.diagram_type !== 'None' && q.diagram_type !== 'null') || q.question_text.toLowerCase().includes('diagram') || q.question_text.toLowerCase().includes('figure')) && (
+                          <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col items-center">
+                            {q._raw_svg ? (
+                              <div 
+                                className="w-full min-h-[300px] flex items-center justify-center overflow-hidden [&>svg]:max-w-full [&>svg]:max-h-[500px] [&>svg]:h-auto"
+                                dangerouslySetInnerHTML={{ __html: q._raw_svg }}
+                              />
+                            ) : (
+                              <div className="w-full h-32 flex items-center justify-center border-2 border-dashed border-gray-300 rounded-xl text-gray-400 text-sm font-bold">
+                                Missing Required Diagram
+                              </div>
+                            )}
+                            <button
+                              onClick={() => handleRegenerateDiagram(idx, q)}
+                              disabled={regeneratingIndex === idx}
+                              className="mt-4 px-4 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-sm font-bold shadow-sm hover:bg-gray-50 flex items-center gap-2 transition-all"
+                            >
+                              {regeneratingIndex === idx ? <Loader2 className="w-4 h-4 animate-spin text-blue-600" /> : <RefreshCw className="w-4 h-4 text-blue-600" />}
+                              {regeneratingIndex === idx ? "Regenerating..." : (q._raw_svg ? "Regenerate Image" : "Generate Missing Image")}
+                            </button>
                           </div>
                         )}
                       </div>
@@ -617,10 +809,16 @@ export default function App() {
             >
               <div className="flex items-center justify-between">
                 <button 
-                  onClick={() => setView('dashboard')}
+                  onClick={() => {
+                    if (isGenerating || questions.length > 0) {
+                      setView(isGenerating ? 'generator' : 'viewer');
+                    } else {
+                      setView('dashboard');
+                    }
+                  }}
                   className="flex items-center text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
                 >
-                  <ArrowLeft className="w-4 h-4 mr-2" /> Back to Dashboard
+                  <ArrowLeft className="w-4 h-4 mr-2" /> {isGenerating || questions.length > 0 ? "Back to Generation" : "Back to Dashboard"}
                 </button>
                 <h2 className="text-2xl font-black tracking-tight flex items-center gap-2">
                   <History className="w-6 h-6 text-blue-600" />
@@ -707,6 +905,117 @@ export default function App() {
               </div>
             </motion.div>
           )}
+
+          {view === 'drafts' && (
+            <motion.div
+              key="drafts"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
+            >
+              <div className="flex items-center justify-between">
+                <button 
+                  onClick={() => {
+                    if (isGenerating || questions.length > 0) {
+                      setView(isGenerating ? 'generator' : 'viewer');
+                    } else {
+                      setView('dashboard');
+                    }
+                  }}
+                  className="flex items-center text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" /> {isGenerating || questions.length > 0 ? "Back to Generation" : "Back to Dashboard"}
+                </button>
+                <div className="flex gap-3">
+                  <label className="px-4 py-2 bg-green-100 text-green-700 rounded-lg font-bold text-sm hover:bg-green-200 transition-all flex items-center gap-2 cursor-pointer">
+                    <Download className="w-4 h-4" /> Import
+                    <input type="file" accept=".json" onChange={importQuestions} className="hidden" />
+                  </label>
+                  <button 
+                    onClick={clearDrafts}
+                    disabled={drafts.length === 0}
+                    className="px-4 py-2 bg-red-100 text-red-700 rounded-lg font-bold text-sm hover:bg-red-200 transition-all flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" /> Clear All
+                  </button>
+                </div>
+              </div>
+
+              <h2 className="text-2xl font-black tracking-tight flex items-center gap-2">
+                <Save className="w-6 h-6 text-amber-500" />
+                Saved Drafts ({drafts.length})
+              </h2>
+
+              {drafts.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-gray-200 overflow-hidden shadow-lg p-12 text-center">
+                  <Save className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+                  <p className="text-gray-500 font-medium">No drafts saved. Generate questions and click "Save as Draft" to save them locally.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {drafts.map((q, idx) => (
+                    <div key={idx} className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                      <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                        <div className="flex items-center gap-3">
+                          <span className="px-2 py-1 bg-amber-100 text-amber-700 rounded text-[10px] font-black uppercase tracking-tighter">
+                            Q{idx + 1}
+                          </span>
+                          <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                            {q.topic} › {q.subtopic}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => setEditingQuestion({index: idx, question: q})}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => {
+                              const newDrafts = drafts.filter((_, i) => i !== idx);
+                              saveDrafts(newDrafts);
+                            }}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="p-4">
+                        <p className="text-sm font-medium text-gray-800">{q.question_text}</p>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex gap-4 pt-4">
+                    <button
+                      onClick={() => {
+                        setQuestions(drafts);
+                        setView('viewer');
+                      }}
+                      className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2"
+                    >
+                      <Eye className="w-5 h-5" /> Preview All
+                    </button>
+                    <button
+                      onClick={() => handlePushToSupabase(drafts)}
+                      disabled={isSaving}
+                      className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg hover:bg-indigo-700 transition-all flex items-center gap-2"
+                    >
+                      <Database className="w-5 h-5" /> Push All to Supabase
+                    </button>
+                    <button
+                      onClick={exportAllDrafts}
+                      className="px-6 py-3 bg-amber-600 text-white rounded-xl font-bold shadow-lg hover:bg-amber-700 transition-all flex items-center gap-2"
+                    >
+                      <Download className="w-5 h-5" /> Export All to File
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
         </AnimatePresence>
       </main>
 
@@ -724,6 +1033,107 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Edit Question Modal */}
+      {editingQuestion && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-100">
+              <h3 className="text-xl font-black flex items-center gap-2">
+                <Pencil className="w-5 h-5 text-blue-600" /> Edit Question
+              </h3>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Question Text</label>
+                <textarea
+                  value={editingQuestion.question.question_text}
+                  onChange={(e) => setEditingQuestion({...editingQuestion, question: {...editingQuestion.question, question_text: e.target.value}})}
+                  className="w-full border border-gray-200 rounded-lg p-3 text-sm font-medium"
+                  rows={3}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Topic</label>
+                  <input
+                    type="text"
+                    value={editingQuestion.question.topic}
+                    onChange={(e) => setEditingQuestion({...editingQuestion, question: {...editingQuestion.question, topic: e.target.value}})}
+                    className="w-full border border-gray-200 rounded-lg p-3 text-sm font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Subtopic</label>
+                  <input
+                    type="text"
+                    value={editingQuestion.question.subtopic}
+                    onChange={(e) => setEditingQuestion({...editingQuestion, question: {...editingQuestion.question, subtopic: e.target.value}})}
+                    className="w-full border border-gray-200 rounded-lg p-3 text-sm font-medium"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Correct Answer</label>
+                  <input
+                    type="text"
+                    value={editingQuestion.question.correct_answer}
+                    onChange={(e) => setEditingQuestion({...editingQuestion, question: {...editingQuestion.question, correct_answer: e.target.value}})}
+                    className="w-full border border-gray-200 rounded-lg p-3 text-sm font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 mb-1">Marks</label>
+                  <input
+                    type="number"
+                    value={editingQuestion.question.marks}
+                    onChange={(e) => setEditingQuestion({...editingQuestion, question: {...editingQuestion.question, marks: Number(e.target.value)}})}
+                    className="w-full border border-gray-200 rounded-lg p-3 text-sm font-medium"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Model Answer</label>
+                <textarea
+                  value={editingQuestion.question.model_answer}
+                  onChange={(e) => setEditingQuestion({...editingQuestion, question: {...editingQuestion.question, model_answer: e.target.value}})}
+                  className="w-full border border-gray-200 rounded-lg p-3 text-sm font-medium"
+                  rows={3}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-gray-700 mb-1">Explanation</label>
+                <textarea
+                  value={editingQuestion.question.explanation_json.why_correct}
+                  onChange={(e) => setEditingQuestion({...editingQuestion, question: {...editingQuestion.question, explanation_json: {...editingQuestion.question.explanation_json, why_correct: e.target.value}}})}
+                  className="w-full border border-gray-200 rounded-lg p-3 text-sm font-medium"
+                  rows={2}
+                />
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-100 flex justify-end gap-3">
+              <button
+                onClick={() => setEditingQuestion(null)}
+                className="px-4 py-2 text-gray-600 font-bold hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const newDrafts = [...drafts];
+                  newDrafts[editingQuestion.index] = editingQuestion.question;
+                  saveDrafts(newDrafts);
+                  setEditingQuestion(null);
+                }}
+                className="px-6 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

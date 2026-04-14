@@ -5,7 +5,61 @@ import { collection, doc, setDoc, writeBatch } from "firebase/firestore";
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const useOllama = import.meta.env.VITE_USE_OLLAMA === "true";
+const ollamaBaseUrl = import.meta.env.VITE_OLLAMA_BASE_URL || "http://localhost:11434";
+const ollamaModel = import.meta.env.VITE_OLLAMA_MODEL || "gemma";
+
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
+
+async function* ollamaGenerateContentStream(prompt: string, onPartialQuestion?: (partialText: string) => void) {
+  const response = await fetch(`${ollamaBaseUrl}/api/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: ollamaModel,
+      prompt,
+      stream: true,
+      format: "json"
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Ollama error: ${response.status} ${response.statusText}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const data = JSON.parse(line);
+        if (data.response) {
+          fullText += data.response;
+          const matches = [...fullText.matchAll(/"question_text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/g)];
+          if (matches.length > 0) {
+            onPartialQuestion?.(matches[matches.length - 1][1]);
+          }
+          yield { text: fullText };
+        }
+      } catch (e) {
+        // Skip invalid JSON lines
+      }
+    }
+  }
+}
 
 export async function saveQuestionBank(
   subjectName: string,
@@ -104,11 +158,16 @@ export async function generateQuestionsBatch(
       diagramPrompt += `\n      - A reference sketch/image is provided. Refine this sketch into accurate, professional SVG representations for the visual aids in the questions where relevant.`;
     }
 
+    const recentFromSession = allQuestions.map(q => q.question_text).slice(-20);
+    const recentFromDB = existingQuestions.slice(0, 30);
+    const combinedQuestions = [...recentFromSession, ...recentFromDB];
+
     let duplicatePreventionPrompt = "";
-    if (existingQuestions.length > 0) {
+    if (combinedQuestions.length > 0) {
       duplicatePreventionPrompt = `
-      - DUPLICATE PREVENTION: You MUST NOT generate questions that are similar to these existing questions:
-      ${existingQuestions.slice(0, 30).map(q => `- ${q}`).join('\n')}
+      - DUPLICATE PREVENTION: You MUST NOT generate questions that are conceptually similar to these already-existing questions:
+      ${combinedQuestions.map(q => `- ${q}`).join('\n')}
+      - STRICT RULE: Do NOT just create basic variations of these questions by simply swapping numbers, names, or minor details. You must generate entirely new conceptual testing angles, testing different parts of the syllabus!
       `;
     }
 
@@ -149,53 +208,60 @@ export async function generateQuestionsBatch(
     while (!success && attempts < 3) {
       try {
         attempts++;
-        const responseStream = await ai.models.generateContentStream({
-          model: "gemini-3.1-pro-preview",
-          contents: { parts },
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  topic: { type: Type.STRING },
-                  subtopic: { type: Type.STRING },
-                  question_text: { type: Type.STRING },
-                  question_type: { type: Type.STRING },
-                  options_json: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  correct_answer: { type: Type.STRING },
-                  model_answer: { type: Type.STRING },
-                  explanation_json: {
-                    type: Type.OBJECT,
-                    properties: {
-                      why_correct: { type: Type.STRING },
-                      key_understanding: { type: Type.STRING }
-                    }
-                  },
-                  key_points_json: { type: Type.ARRAY, items: { type: Type.STRING } },
-                  marks: { type: Type.NUMBER },
-                  diagram_url: { type: Type.STRING },
-                  diagram_type: { type: Type.STRING },
-                  _raw_svg: { type: Type.STRING },
-                  difficulty: { type: Type.NUMBER },
-                  time_estimate: { type: Type.NUMBER }
+        
+        let text = "";
+        
+        if (useOllama) {
+          for await (const chunk of ollamaGenerateContentStream(prompt, onPartialQuestion)) {
+            text += chunk.text;
+          }
+        } else {
+          const responseStream = await ai.models.generateContentStream({
+            model: "gemini-2.5-flash",
+            contents: { parts },
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    topic: { type: Type.STRING },
+                    subtopic: { type: Type.STRING },
+                    question_text: { type: Type.STRING },
+                    question_type: { type: Type.STRING },
+                    options_json: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    correct_answer: { type: Type.STRING },
+                    model_answer: { type: Type.STRING },
+                    explanation_json: {
+                      type: Type.OBJECT,
+                      properties: {
+                        why_correct: { type: Type.STRING },
+                        key_understanding: { type: Type.STRING }
+                      }
+                    },
+                    key_points_json: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    marks: { type: Type.NUMBER },
+                    diagram_url: { type: Type.STRING },
+                    diagram_type: { type: Type.STRING },
+                    _raw_svg: { type: Type.STRING },
+                    difficulty: { type: Type.NUMBER },
+                    time_estimate: { type: Type.NUMBER }
+                  }
                 }
               }
             }
-          }
-        });
+          });
 
-        let text = "";
-        for await (const chunk of responseStream) {
-          text += chunk.text;
-          
-          // Try to extract the currently generating question text
-          const matches = [...text.matchAll(/"question_text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/g)];
-          if (matches.length > 0) {
-            const latestMatch = matches[matches.length - 1][1];
-            if (latestMatch) {
-              onPartialQuestion?.(latestMatch);
+          for await (const chunk of responseStream) {
+            text += chunk.text;
+            
+            const matches = [...text.matchAll(/"question_text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)/g)];
+            if (matches.length > 0) {
+              const latestMatch = matches[matches.length - 1][1];
+              if (latestMatch) {
+                onPartialQuestion?.(latestMatch);
+              }
             }
           }
         }
@@ -262,3 +328,74 @@ export async function generateQuestionsBatch(
   onProgress?.(100, `Generation complete! ${allQuestions.length} questions ready.`);
   return allQuestions;
 }
+
+export async function regenerateDiagramForQuestion(question: Question): Promise<string> {
+  const isOllama = shouldUseOllama();
+  
+  const prompt = `
+  You are an expert Cambridge IGCSE diagram generator.
+  The following question requires a visual diagram, but the SVG code is missing.
+  
+  Question: "${question.question_text}"
+  Model Answer/Context: "${question.model_answer}"
+  
+  Requirements:
+  1. Generate ONLY the raw SVG code for this diagram.
+  2. Use a generous \`viewBox\` (e.g., \`0 0 500 500\`) and ensure no text or lines are cut off.
+  3. Respond with perfectly valid XML <svg>...</svg>. DO NOT wrap it in a JSON object.
+  4. Include the xmlns attribute xmlns="http://www.w3.org/2000/svg".
+  5. DO NOT output any conversational text or markdown around the SVG. Just the raw XML string.
+  `;
+
+  try {
+    let rawText = "";
+    if (isOllama) {
+      const response = await fetch(`${getOllamaBaseUrl()}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: getOllamaModel(),
+          prompt: prompt,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) throw new Error(`Ollama API Error: ${response.status}`);
+      const data = await response.json();
+      rawText = data.response;
+    } else {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new Error("Gemini API key is required");
+
+      const geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+      const response = await fetch(`${geminiUrl}?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.1 }
+        })
+      });
+
+      if (!response.ok) throw new Error(`Gemini API Error: ${response.status}`);
+      const data = await response.json();
+      rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    }
+
+    let cleanSvg = rawText.trim();
+    const match = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
+    if (match) {
+      cleanSvg = match[0];
+    }
+    
+    if (!cleanSvg.includes('xmlns=')) {
+      cleanSvg = cleanSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+
+    return cleanSvg;
+  } catch (err) {
+    console.error("Failed to regenerate diagram:", err);
+    throw err;
+  }
+}
+

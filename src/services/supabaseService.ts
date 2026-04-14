@@ -1,11 +1,24 @@
 import { supabase } from '../lib/supabase';
 import { Question } from '../types';
+import { SUBJECTS } from '../constants';
 
 /**
  * Converts an SVG string to a PNG Blob.
  */
 async function convertSvgToPngBlob(svgString: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
+    // Strip markdown formatting if AI provided it: e.g. ```xml <svg>... ```
+    let cleanSvg = svgString;
+    const match = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
+    if (match) {
+      cleanSvg = match[0];
+    }
+
+    // Critical fix: If the AI forgot the xmlns attribute, the browser Image element will silently fail to render the SVG!
+    if (!cleanSvg.includes('xmlns=')) {
+      cleanSvg = cleanSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) {
@@ -13,8 +26,8 @@ async function convertSvgToPngBlob(svgString: string): Promise<Blob> {
     }
 
     const img = new Image();
-    // Create a blob from the SVG string
-    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    // Create a blob from the cleanly extracted SVG string
+    const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(svgBlob);
 
     img.onload = () => {
@@ -57,17 +70,29 @@ async function uploadDiagram(file: Blob, topic: string, subjectCode: string): Pr
   const uuid = Math.random().toString(36).substring(2, 15);
   const fileName = `${subjectCode}/${topicSlug}-${uuid}.png`;
   
-  const { data, error } = await supabase.storage
-    .from('diagrams')
-    .upload(fileName, file, { upsert: false, contentType: 'image/png' });
-  
-  if (error) throw error;
-  
-  const { data: { publicUrl } } = supabase.storage
-    .from('diagrams')
-    .getPublicUrl(fileName);
-  
-  return publicUrl;
+  try {
+    const { data, error } = await supabase.storage
+      .from('diagrams')
+      .upload(fileName, file, { upsert: false, contentType: 'image/png' });
+    
+    if (error) {
+      if (error.message?.includes('fetch failed') || error.message?.includes('connect')) {
+        throw new Error('Cannot connect to Supabase Storage. This may be a network/firewall issue, or the "diagrams" bucket may not exist. Please check: 1) Your firewall is not blocking storage.supabase.co, 2) The bucket "diagrams" exists in Supabase Dashboard -> Storage');
+      }
+      throw error;
+    }
+    
+    const { data: { publicUrl } } = supabase.storage
+      .from('diagrams')
+      .getPublicUrl(fileName);
+    
+    return publicUrl;
+  } catch (err: any) {
+    if (err.message?.includes('Cannot connect to Supabase Storage')) {
+      throw err;
+    }
+    throw new Error(`Storage upload failed: ${err.message}`);
+  }
 }
 
 /**
@@ -98,7 +123,7 @@ export async function getExistingQuestionTexts(subjectCode: string): Promise<str
       .select('question_text')
       .eq('subject_code', subjectCode)
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(150);
       
     if (error) throw error;
     return data ? data.map(q => q.question_text) : [];
@@ -143,14 +168,35 @@ export async function fetchHistory(): Promise<HistoryRecord[]> {
 export async function pushQuestionsToSupabase(
   questions: Question[],
   onProgress?: (progress: number, message: string) => void
-): Promise<{ successCount: number, failedCount: number, errors: any[] }> {
+): Promise<{ successCount: number, failedCount: number, errors: any[], successfulIndices: number[] }> {
+  console.log("Starting push to Supabase with", questions.length, "questions");
   let processedCount = 0;
   let failedCount = 0;
   let errors: any[] = [];
+  let successfulIndices: number[] = [];
   const total = questions.length;
+
+  if (total > 0) {
+    const code = questions[0].subject_code;
+    const subjectInfo = SUBJECTS.find(s => s.code === code);
+    if (subjectInfo) {
+      onProgress?.(0, `Ensuring subject ${code} exists in database...`);
+      const { error: subjectError } = await supabase.from('subjects').upsert({
+        code: subjectInfo.code,
+        name: subjectInfo.name,
+        icon: 'book',
+        color: '#3B82F6'
+      }, { onConflict: 'code' });
+      
+      if (subjectError) {
+        console.warn(`Failed to auto-insert subject (might be RLS):`, subjectError);
+      }
+    }
+  }
 
   for (let i = 0; i < questions.length; i++) {
     const q = questions[i];
+    console.log(`Processing question ${i + 1}:`, q.topic, q.subject_code);
     try {
       // DUPLICATE SAFETY: Before inserting, check whether a question already exists
       const { data: existing } = await supabase
@@ -164,10 +210,19 @@ export async function pushQuestionsToSupabase(
       if (existing && existing.length > 0) {
         console.log(`Skipping duplicate question: ${q.question_text.substring(0, 50)}...`);
         processedCount++;
+        successfulIndices.push(i); // Count duplicates as "successful" so they get cleared from local drafts
         continue;
       }
 
       let finalDiagramUrl = q.diagram_url;
+
+      // Pre-flight validation: Did the AI fail to generate a required diagram?
+      const needsDiagram = (q.diagram_type && q.diagram_type !== 'None' && q.diagram_type !== 'null') || 
+                           (q.question_text.toLowerCase().includes('diagram') || q.question_text.toLowerCase().includes('figure'));
+      
+      if (needsDiagram && !q._raw_svg && !finalDiagramUrl) {
+        throw new Error("Missing SVG: This question requires a diagram, but the AI failed to generate the SVG code. Please regenerate the diagram.");
+      }
 
       // If there's a raw SVG, convert and upload it
       if (q._raw_svg && !finalDiagramUrl) {
@@ -176,8 +231,13 @@ export async function pushQuestionsToSupabase(
           `Uploading diagram for question ${i + 1}...`
         );
         
-        const pngBlob = await convertSvgToPngBlob(q._raw_svg);
-        finalDiagramUrl = await uploadDiagram(pngBlob, q.topic, q.subject_code || 'unknown');
+        try {
+          const pngBlob = await convertSvgToPngBlob(q._raw_svg);
+          finalDiagramUrl = await uploadDiagram(pngBlob, q.topic, q.subject_code || 'unknown');
+        } catch (uploadErr: any) {
+          console.warn(`Failed to upload diagram for question ${i + 1}, saving without diagram:`, uploadErr.message);
+          finalDiagramUrl = null;
+        }
       }
 
       onProgress?.(
@@ -211,24 +271,32 @@ export async function pushQuestionsToSupabase(
         if (errorMessage.includes('row-level security policy')) {
           errorMessage = 'Row-Level Security (RLS) policy is blocking inserts. Please go to your Supabase Dashboard -> Authentication -> Policies, and create a policy that allows inserts for the "questions" table (e.g., "Enable insert for authenticated users only" or "Enable insert for all users" for testing).';
         }
+        if (errorMessage.includes('null value') && errorMessage.includes('violates not-null')) {
+          errorMessage = `Database NOT NULL constraint error: ${errorMessage}. Check that model_answer and explanation_json are provided for each question.`;
+        }
+        if (errorMessage.includes('foreign key') && errorMessage.includes('subject_code')) {
+          errorMessage = `Foreign key violation for subject_code: "${q.subject_code}". \n\nI tried to automatically add this subject to the "subjects" table, but your Supabase RLS policies blocked it. Please go to Supabase -> Authentication -> Policies, and create a policy that enables "INSERT" for anonymous users on the "subjects" table!`;
+        }
         console.error('Error inserting question:', errorMessage);
         throw new Error(errorMessage);
       }
 
       processedCount++;
+      successfulIndices.push(i);
     } catch (err: any) {
       let errorMessage = err.message || String(err);
+      console.error(`Question ${i + 1} failed:`, err);
       if (errorMessage.includes('Bucket not found')) {
         errorMessage = 'Storage bucket "diagrams" not found. Please go to your Supabase Dashboard -> Storage, and create a new public bucket named "diagrams".';
       }
       console.error(`Failed to process question ${i + 1}:`, errorMessage);
       failedCount++;
       errors.push(new Error(errorMessage));
-      // We continue with the next question even if one fails
     }
   }
 
-  onProgress?.(100, `Successfully saved ${processedCount} questions to Supabase!`);
+  console.log(`Push complete: ${processedCount} success, ${failedCount} failed`);
+  onProgress?.(100, `Saved ${processedCount} questions. ${failedCount} failed (check console).`);
   
-  return { successCount: processedCount, failedCount, errors };
+  return { successCount: processedCount, failedCount, errors, successfulIndices };
 }
