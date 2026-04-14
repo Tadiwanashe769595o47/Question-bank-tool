@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   BookOpen, 
@@ -51,8 +51,10 @@ export default function App() {
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
   const [historySubjectFilter, setHistorySubjectFilter] = useState<string>('ALL');
 
-  // Regeneration state
   const [regeneratingIndex, setRegeneratingIndex] = useState<number | null>(null);
+
+  // Abort controller for terminating generation
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     testSupabaseConnection().then(success => {
@@ -181,6 +183,14 @@ export default function App() {
     }
   };
 
+  const abortGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setGenerationMessage("Generation stopped by user.");
+      setIsGenerating(false);
+    }
+  };
+
   const startGeneration = async () => {
     if (!selectedSubject) return;
     setView('generator');
@@ -191,6 +201,9 @@ export default function App() {
     setCurrentStreamedQuestion("");
     setQuestions([]);
     setIsPushed(false);
+
+    // Set up new abort controller
+    abortControllerRef.current = new AbortController();
 
     try {
       const existing = await getExistingQuestionTexts(selectedSubject.code);
@@ -213,7 +226,8 @@ export default function App() {
         },
         (partialText) => {
           setCurrentStreamedQuestion(partialText);
-        }
+        },
+        abortControllerRef.current.signal
       );
       
       // Auto-save generated questions to a new draft session to prevent loss
@@ -228,11 +242,16 @@ export default function App() {
         saveDrafts([newDraft, ...drafts]);
       }
       
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError' || abortControllerRef.current?.signal.aborted) {
+        console.log('Generation aborted');
+        return;
+      }
       console.error("Generation failed", error);
-      setGenerationMessage("An error occurred during generation.");
+      setGenerationMessage(`An error occurred during generation: ${error.message}`);
     } finally {
       setIsGenerating(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -706,6 +725,14 @@ export default function App() {
               )}
 
               <div className="flex items-center justify-center gap-4 pt-8">
+                {isGenerating && (
+                  <button
+                    onClick={abortGeneration}
+                    className="px-6 py-3 bg-red-100 border border-red-200 text-red-700 rounded-xl font-bold hover:bg-red-200 transition-all flex items-center gap-2"
+                  >
+                    <AlertCircle className="w-5 h-5" /> Stop Generation
+                  </button>
+                )}
                 {!isGenerating && (
                   <>
                     <button

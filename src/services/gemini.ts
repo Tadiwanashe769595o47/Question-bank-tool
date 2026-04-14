@@ -135,14 +135,20 @@ export async function generateQuestionsBatch(
   diagramPreferences?: { type: string, referenceImage?: { data: string, mimeType: string } },
   existingQuestions: string[] = [],
   onBatchComplete?: (questions: Question[]) => void,
-  onPartialQuestion?: (partialText: string) => void
+  onPartialQuestion?: (partialText: string) => void,
+  signal?: AbortSignal
 ): Promise<Question[]> {
-  const batchSize = 3; // Reduced from 4 to be safer with rate limits
+  const batchSize = 1; // Extremely low batch size to guarantee sub-10 second TTFB and prevent Vercel 504 Edge Timeouts
   let allQuestions: Question[] = [];
   let totalAttempts = 0;
   const maxTotalAttempts = Math.ceil(count / batchSize) * 3; // Prevent infinite loops
 
   while (allQuestions.length < count && totalAttempts < maxTotalAttempts) {
+    if (signal?.aborted) {
+      console.log("Generation loop aborted by user");
+      break;
+    }
+
     const remainingCount = count - allQuestions.length;
     const currentBatchCount = Math.min(batchSize, remainingCount);
     
@@ -249,10 +255,17 @@ export async function generateQuestionsBatch(
             }
           };
 
+          // Check for manual abort
+          if (signal?.aborted) {
+            console.log("Generation aborted by user");
+            break;
+          }
+
           const response = await fetch('/api/generateStream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt, diagramPreferences, responseSchema })
+            body: JSON.stringify({ prompt, diagramPreferences, responseSchema }),
+            signal
           });
 
           if (!response.ok) {
