@@ -8,19 +8,25 @@ import { regenerateDiagramForQuestion } from './gemini';
  */
 async function convertSvgToPngBlob(svgString: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    // Strip markdown formatting if AI provided it: e.g. ```xml <svg>... ```
     let cleanSvg = svgString;
     const svgMatch = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
     if (svgMatch) {
       cleanSvg = svgMatch[0];
     }
 
-    // Critical fix: If the AI forgot the xmlns attribute, the browser Image element will silently fail to render the SVG!
     if (!cleanSvg.includes('xmlns=')) {
       cleanSvg = cleanSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
     }
 
-    // Extract width/height from attributes or viewBox so the canvas has correct dimensions
+    // Validate SVG structure before attempting conversion
+    const hasValidTags = cleanSvg.includes('<svg') && cleanSvg.includes('</svg>');
+    const hasContent = cleanSvg.length > 100; // Reasonable minimum for a real SVG
+    if (!hasValidTags || !hasContent) {
+      console.error('[Diagram] Invalid SVG detected - too short or missing tags:', cleanSvg.substring(0, 100));
+      reject(new Error('Invalid SVG structure - diagram too small or malformed'));
+      return;
+    }
+
     let canvasW = 800;
     let canvasH = 600;
     const wMatch = cleanSvg.match(/\bwidth=["']([0-9.]+)/i);
@@ -38,7 +44,6 @@ async function convertSvgToPngBlob(svgString: string): Promise<Blob> {
       }
     }
 
-    // If SVG has no explicit width/height, inject them so the Image element knows the intrinsic size
     if (!wMatch || !hMatch) {
       cleanSvg = cleanSvg.replace(/<svg/i, `<svg width="${canvasW}" height="${canvasH}"`);
     }
@@ -55,7 +60,6 @@ async function convertSvgToPngBlob(svgString: string): Promise<Blob> {
     const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(svgBlob);
 
-    // Add a hard timeout — if the browser doesn't fire onload in 8s the SVG is invalid
     const timeout = setTimeout(() => {
       URL.revokeObjectURL(url);
       reject(new Error('SVG rendering timed out — the SVG code may be invalid or too complex.'));
@@ -63,17 +67,22 @@ async function convertSvgToPngBlob(svgString: string): Promise<Blob> {
 
     img.onload = () => {
       clearTimeout(timeout);
-      // Fill with white background
+      // Verify the image actually loaded with dimensions
+      if (img.width === 0 || img.height === 0) {
+        URL.revokeObjectURL(url);
+        reject(new Error('SVG rendered with zero dimensions'));
+        return;
+      }
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
 
       canvas.toBlob((blob) => {
-        if (blob) {
+        if (blob && blob.size > 0) {
           resolve(blob);
         } else {
-          reject(new Error('canvas.toBlob() returned null — canvas may be tainted or empty'));
+          reject(new Error('canvas.toBlob() returned empty blob'));
         }
       }, 'image/png');
     };
@@ -221,6 +230,32 @@ export async function fetchHistory(): Promise<HistoryRecord[]> {
   } catch (err) {
     console.error("Failed to fetch history:", err);
     return [];
+  }
+}
+
+export async function updateQuestionDiagram(questionId: string, diagramUrl: string): Promise<boolean> {
+  try {
+    const { error } = await supabase
+      .from('questions')
+      .update({ diagram_url: diagramUrl })
+      .eq('id', questionId);
+    
+    if (error) throw error;
+    return true;
+  } catch (err) {
+    console.error("Failed to update diagram:", err);
+    return false;
+  }
+}
+
+export async function convertSvgToPngAndUpload(svgString: string, topic: string, subjectCode: string): Promise<string | null> {
+  try {
+    const pngBlob = await convertSvgToPngBlob(svgString);
+    const url = await uploadDiagram(pngBlob, topic, subjectCode);
+    return url;
+  } catch (err) {
+    console.error("Failed to convert and upload SVG:", err);
+    return null;
   }
 }
 

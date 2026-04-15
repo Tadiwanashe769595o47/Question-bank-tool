@@ -157,9 +157,17 @@ export async function generateQuestionsBatch(
       `Generating questions... (${allQuestions.length}/${count} complete)`
     );
 
-    let diagramPrompt = "- DIAGRAMS: ONLY include a diagram if it is ABSOLUTELY NECESSARY to answer the question. Do NOT force diagrams. Do NOT repeat the same diagram design with different numbers.";
-    if (diagramPreferences?.type && diagramPreferences.type !== 'Auto') {
-      diagramPrompt = `- DIAGRAMS: If a diagram is ABSOLUTELY NECESSARY, focus on including ${diagramPreferences.type} SVG diagrams. Do NOT force diagrams if not needed.`;
+    const subjectsWithoutDiagrams = ['0500', '0510', 'English First Language', 'English Second Language'];
+    const needsDiagrams = !subjectsWithoutDiagrams.includes(subjectCode) && !subjectsWithoutDiagrams.includes(subjectName);
+
+    let diagramPrompt = "";
+    if (!needsDiagrams) {
+      diagramPrompt = "- DIAGRAMS: DO NOT generate ANY diagrams for this subject. English language papers do not require visual diagrams. Leave diagram fields empty/null.";
+    } else {
+      diagramPrompt = "- DIAGRAMS: ONLY include a diagram if it is ABSOLUTELY NECESSARY to answer the question. Do NOT force diagrams. Do NOT repeat the same diagram design with different numbers.";
+      if (diagramPreferences?.type && diagramPreferences.type !== 'Auto') {
+        diagramPrompt = `- DIAGRAMS: If a diagram is ABSOLUTELY NECESSARY, focus on including ${diagramPreferences.type} SVG diagrams. Do NOT force diagrams if not needed.`;
+      }
     }
     diagramPrompt += `\n      - CRITICAL DIAGRAM RULES: If you generate an SVG diagram, it MUST be complete. Use a generous \`viewBox\` (e.g., \`0 0 500 500\`) and leave plenty of margin/padding around the edges so no text or lines are cut off. It MUST have clear x and y axes with labels and numbers/units if it's a graph. Any label referenced in the question (e.g., D1, D2, Point X, Curve A) MUST be explicitly drawn and visible in the SVG text elements well within the boundaries. Do not generate a question about a label that is missing from the diagram.
       - NO ANSWERS IN DIAGRAMS: The diagram MUST NOT reveal the answer to the question. For example, if the question asks to find the price, the price axis in the diagram should have a placeholder like 'P' or '?' instead of the actual answer value. If the question asks to identify a curve, label it 'Curve A' instead of 'Supply Curve'.`;
@@ -368,9 +376,16 @@ export async function regenerateDiagramForQuestion(question: Question): Promise<
 
     if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    
+    // New API format returns { svg: "..." }
+    let cleanSvg = data.svg || "";
+    
+    // Fallback: if new format not found, try old format
+    if (!cleanSvg) {
+      cleanSvg = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    }
 
-    let cleanSvg = rawText.trim();
+    // Clean up the SVG
     const match = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
     if (match) {
       cleanSvg = match[0];
@@ -378,6 +393,14 @@ export async function regenerateDiagramForQuestion(question: Question): Promise<
     
     if (!cleanSvg.includes('xmlns=')) {
       cleanSvg = cleanSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+    
+    // Add default dimensions if missing
+    if (!cleanSvg.match(/\bwidth=/i)) {
+      cleanSvg = cleanSvg.replace(/<svg/i, '<svg width="500"');
+    }
+    if (!cleanSvg.match(/\bheight=/i)) {
+      cleanSvg = cleanSvg.replace(/<svg/i, '<svg height="400"');
     }
 
     return cleanSvg;

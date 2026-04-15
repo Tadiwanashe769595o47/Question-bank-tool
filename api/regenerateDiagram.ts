@@ -25,7 +25,10 @@ export default async function handler(req: Request) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.1 }
+        generationConfig: { 
+          temperature: 0.1,
+          maxOutputTokens: 4096
+        }
       })
     });
 
@@ -38,7 +41,30 @@ export default async function handler(req: Request) {
     }
 
     const data = await response.json();
-    return new Response(JSON.stringify(data), {
+    
+    // Extract and validate the SVG
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    
+    // Clean up and validate the SVG
+    let cleanSvg = rawText.trim();
+    const match = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
+    if (match) {
+      cleanSvg = match[0];
+    }
+    
+    if (!cleanSvg.includes('xmlns=')) {
+      cleanSvg = cleanSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+    }
+
+    // Add default dimensions if missing
+    if (!cleanSvg.match(/\bwidth=/i)) {
+      cleanSvg = cleanSvg.replace(/<svg/i, '<svg width="500"');
+    }
+    if (!cleanSvg.match(/\bheight=/i)) {
+      cleanSvg = cleanSvg.replace(/<svg/i, '<svg height="400"');
+    }
+
+    return new Response(JSON.stringify({ svg: cleanSvg }), {
       headers: { 'Content-Type': 'application/json' }
     });
 

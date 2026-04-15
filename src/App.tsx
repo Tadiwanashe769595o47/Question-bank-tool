@@ -22,7 +22,7 @@ import { cn } from "./lib/utils";
 import { SUBJECTS } from "./constants";
 import { Question, SyllabusConfirmation, QuestionBank, Subject, Draft } from "./types";
 import { generateQuestionsBatch, regenerateDiagramForQuestion } from "./services/gemini";
-import { pushQuestionsToSupabase, testSupabaseConnection, getExistingQuestionTexts, fetchHistory, HistoryRecord, checkStorageBucket } from "./services/supabaseService";
+import { pushQuestionsToSupabase, testSupabaseConnection, getExistingQuestionTexts, fetchHistory, HistoryRecord, checkStorageBucket, updateQuestionDiagram, convertSvgToPngAndUpload } from "./services/supabaseService";
 import { History, Calendar } from "lucide-react";
 
 export default function App() {
@@ -1033,16 +1033,65 @@ export default function App() {
                             {typedRecords.length} questions
                           </span>
                         </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-{typedRecords.map(record => (
+<div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {typedRecords.map((record, idx) => (
                               <div key={record.id} className="p-4 bg-gray-50 rounded-xl border border-gray-100">
                                 <div className="flex items-center justify-between mb-2">
                                   <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-[10px] font-black uppercase">
                                     {record.subject_code}
                                   </span>
-                                  <span className="text-[10px] font-bold text-gray-400">
-                                    {new Date(record.created_at).toLocaleTimeString()}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    {!record.diagram_url && (
+                                      <button
+                                        onClick={async () => {
+                                          if (regeneratingIndex !== null) return;
+                                          setRegeneratingIndex(idx);
+                                          try {
+                                            const tempQuestion: Question = {
+                                              topic: record.topic,
+                                              subtopic: record.subtopic,
+                                              question_text: record.question_text,
+                                              question_type: 'open_text',
+                                              correct_answer: '',
+                                              model_answer: '',
+                                              explanation_json: { why_correct: '', key_understanding: '' },
+                                              key_points_json: [],
+                                              marks: record.marks || 0,
+                                              diagram_url: null,
+                                              difficulty: record.difficulty || 1,
+                                              time_estimate: 1,
+                                              subject_code: record.subject_code
+                                            };
+                                            const newSvg = await regenerateDiagramForQuestion(tempQuestion);
+                                            if (newSvg && newSvg.includes('<svg')) {
+                                              const newUrl = await convertSvgToPngAndUpload(newSvg, record.topic, record.subject_code);
+                                              if (newUrl) {
+                                                await updateQuestionDiagram(record.id, newUrl);
+                                                const data = await fetchHistory();
+                                                setHistoryData(data);
+                                              }
+                                            }
+                                          } catch (err) {
+                                            console.error('Failed to regenerate diagram:', err);
+                                          } finally {
+                                            setRegeneratingIndex(null);
+                                          }
+                                        }}
+                                        disabled={regeneratingIndex === idx}
+                                        className="p-1 hover:bg-gray-200 rounded transition-colors"
+                                        title="Regenerate missing diagram"
+                                      >
+                                        {regeneratingIndex === idx ? (
+                                          <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
+                                        ) : (
+                                          <RefreshCw className="w-4 h-4 text-gray-400 hover:text-blue-500" />
+                                        )}
+                                      </button>
+                                    )}
+                                    <span className="text-[10px] font-bold text-gray-400">
+                                      {new Date(record.created_at).toLocaleTimeString()}
+                                    </span>
+                                  </div>
                                 </div>
                                 <p className="text-xs font-bold text-gray-500 mb-1">{record.topic} › {record.subtopic}</p>
                                 <p className="text-sm font-medium text-gray-800 line-clamp-2">{record.question_text}</p>
