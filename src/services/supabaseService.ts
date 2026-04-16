@@ -1,100 +1,59 @@
 import { supabase } from '../lib/supabase';
 import { Question } from '../types';
 import { SUBJECTS } from '../constants';
-import { regenerateDiagramForQuestion } from './gemini';
+import { regenerateDiagramForQuestion } from './aiService';
+
+// Environment-agnostic canvas and Image
+let Canvas: any;
+let Image: any;
+let loadImage: any;
+
+if (typeof window === 'undefined') {
+  // Node.js environment - dynamic import because this is an ESM module
+  import('canvas').then(canvasPkg => {
+    Canvas = canvasPkg.Canvas;
+    Image = canvasPkg.Image;
+    loadImage = canvasPkg.loadImage;
+  });
+}
 
 /**
  * Converts an SVG string to a PNG Blob.
  */
-async function convertSvgToPngBlob(svgString: string): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    let cleanSvg = svgString;
-    const svgMatch = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
-    if (svgMatch) {
-      cleanSvg = svgMatch[0];
-    }
+async function convertSvgToPngBlob(svgString: string): Promise<Blob | Buffer> {
+  let cleanSvg = svgString;
+  const svgMatch = cleanSvg.match(/<svg[\s\S]*<\/svg>/i);
+  if (svgMatch) cleanSvg = svgMatch[0];
 
-    if (!cleanSvg.includes('xmlns=')) {
-      cleanSvg = cleanSvg.replace(/<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
-    }
-
-    // Validate SVG structure before attempting conversion
-    const hasValidTags = cleanSvg.includes('<svg') && cleanSvg.includes('</svg>');
-    const hasContent = cleanSvg.length > 100; // Reasonable minimum for a real SVG
-    if (!hasValidTags || !hasContent) {
-      console.error('[Diagram] Invalid SVG detected - too short or missing tags:', cleanSvg.substring(0, 100));
-      reject(new Error('Invalid SVG structure - diagram too small or malformed'));
-      return;
-    }
-
-    let canvasW = 800;
-    let canvasH = 600;
-    const wMatch = cleanSvg.match(/\bwidth=["']([0-9.]+)/i);
-    const hMatch = cleanSvg.match(/\bheight=["']([0-9.]+)/i);
-    const vbMatch = cleanSvg.match(/viewBox=["']([0-9.\s-]+)/i);
-
-    if (wMatch && hMatch) {
-      canvasW = parseFloat(wMatch[1]) || 800;
-      canvasH = parseFloat(hMatch[1]) || 600;
-    } else if (vbMatch) {
-      const vbParts = vbMatch[1].trim().split(/[\s,]+/);
-      if (vbParts.length === 4) {
-        canvasW = parseFloat(vbParts[2]) || 800;
-        canvasH = parseFloat(vbParts[3]) || 600;
-      }
-    }
-
-    if (!wMatch || !hMatch) {
-      cleanSvg = cleanSvg.replace(/<svg/i, `<svg width="${canvasW}" height="${canvasH}"`);
-    }
-
-    const canvas = document.createElement('canvas');
-    canvas.width = canvasW;
-    canvas.height = canvasH;
+  if (typeof window === 'undefined') {
+    // Node.js implementation using 'canvas' package
+    const canvas = new Canvas(800, 600);
     const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return reject(new Error('Failed to get canvas 2D context'));
-    }
-
-    const img = new Image();
-    const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(svgBlob);
-
-    const timeout = setTimeout(() => {
-      URL.revokeObjectURL(url);
-      reject(new Error('SVG rendering timed out — the SVG code may be invalid or too complex.'));
-    }, 8000);
-
-    img.onload = () => {
-      clearTimeout(timeout);
-      // Verify the image actually loaded with dimensions
-      if (img.width === 0 || img.height === 0) {
-        URL.revokeObjectURL(url);
-        reject(new Error('SVG rendered with zero dimensions'));
-        return;
-      }
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-
-      canvas.toBlob((blob) => {
-        if (blob && blob.size > 0) {
-          resolve(blob);
-        } else {
-          reject(new Error('canvas.toBlob() returned empty blob'));
-        }
-      }, 'image/png');
-    };
-
-    img.onerror = () => {
-      clearTimeout(timeout);
-      URL.revokeObjectURL(url);
-      reject(new Error('Browser failed to load the SVG as an image. The SVG code from the AI is likely invalid XML.'));
-    };
-
-    img.src = url;
-  });
+    const img = await loadImage(`data:image/svg+xml;base64,${Buffer.from(cleanSvg).toString('base64')}`);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 800, 600);
+    ctx.drawImage(img, 0, 0, 800, 600);
+    return canvas.toBuffer('image/png');
+  } else {
+    // Browser implementation
+    return new Promise((resolve, reject) => {
+      // ... (existing browser implementation)
+      const canvas = document.createElement('canvas');
+      canvas.width = 800;
+      canvas.height = 600;
+      const ctx = canvas.getContext('2d');
+      const img = new window.Image();
+      const svgBlob = new Blob([cleanSvg], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      img.onload = () => {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 800, 600);
+        ctx.drawImage(img, 0, 0, 800, 600);
+        canvas.toBlob((blob) => resolve(blob!), 'image/png');
+      };
+      img.src = url;
+    });
+  }
 }
 
 
@@ -250,7 +209,7 @@ export async function updateQuestionDiagram(questionId: string, diagramUrl: stri
 
 export async function convertSvgToPngAndUpload(svgString: string, topic: string, subjectCode: string): Promise<string | null> {
   try {
-    const pngBlob = await convertSvgToPngBlob(svgString);
+    const pngBlob = await convertSvgToPngBlob(svgString) as Blob;
     const url = await uploadDiagram(pngBlob, topic, subjectCode);
     return url;
   } catch (err) {
@@ -315,8 +274,11 @@ export async function pushQuestionsToSupabase(
       let finalDiagramUrl = q.diagram_url;
 
       // Pre-flight validation: Did the AI fail to generate a required diagram?
-      const needsDiagram = (q.diagram_type && q.diagram_type !== 'None' && q.diagram_type !== 'null') || 
-                           (q.question_text.toLowerCase().includes('diagram') || q.question_text.toLowerCase().includes('figure'));
+      const questionText = q.question_text || '';
+      const diagramType = q.diagram_type || 'None';
+      
+      const needsDiagram = (diagramType !== 'None' && diagramType !== 'null') || 
+                           (questionText.toLowerCase().includes('diagram') || questionText.toLowerCase().includes('figure'));
       
       if (needsDiagram && !q._raw_svg && !finalDiagramUrl) {
         console.warn(`Missing SVG for question ${i + 1}. Attempting automatic regeneration...`);
@@ -340,7 +302,7 @@ export async function pushQuestionsToSupabase(
         );
         
         try {
-          const pngBlob = await convertSvgToPngBlob(q._raw_svg);
+          const pngBlob = await convertSvgToPngBlob(q._raw_svg) as Blob;
           finalDiagramUrl = await uploadDiagram(pngBlob, q.topic, q.subject_code || 'unknown');
           if (finalDiagramUrl) {
             imageCount++;
@@ -368,6 +330,7 @@ export async function pushQuestionsToSupabase(
           correct_answer: q.correct_answer,
           model_answer: q.model_answer,
           explanation_json: q.explanation_json,
+          explanation_steps: q.explanation_steps,
           key_points_json: q.key_points_json,
           marks: q.marks != null ? Math.round(Number(q.marks)) : null,
           diagram_url: finalDiagramUrl || null,

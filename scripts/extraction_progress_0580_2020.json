@@ -1,0 +1,274 @@
+[
+  {
+    "topic": "German Literature",
+    "subtopic": "Robert Seethaler: Der Trafikant",
+    "question_text": "Interpretieren Sie den Textausschnitt in Bezug darauf, wie sich das Leben von Franz durch den Umzug von Timelkam nach Wien verändert.",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Students should analyze how Franz's life changes when he moves from Timelkam to Vienna, focusing on the text excerpt provided.",
+    "model_answer": "Franz feels light and free on the train to Vienna. The fast speed shows he is excited for a new start. Moving to a big city changes his daily life and gives him new chances.",
+    "explanation_json": {
+      "why_correct": "This answer talks about Franz's feelings and the big change in his life.",
+      "key_understanding": "Moving to a new place can make people feel different and start fresh."
+    },
+    "explanation_steps": [
+      "Step 1: Read the text about Franz on the train.",
+      "Step 2: Look for words that show how he feels.",
+      "Step 3: Think about how life in a small town is different from a big city.",
+      "Step 4: Write about the changes in Franz's life.",
+      "Step 5: Use examples from the text to support your ideas."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 3,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  },
+  {
+    "topic": "German Literature",
+    "subtopic": "Heinrich Böll: Ansichten eines Clowns",
+    "question_text": "Beschreiben Sie das Verhältnis zwischen Hans Schnier und seiner Mutter. Beziehen Sie sich dabei auf diesen Textausschnitt und andere relevante Szenen aus dem Buch.",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Students should describe the relationship between Hans and his mother, using the text excerpt and other scenes from the book.",
+    "model_answer": "Hans and his mother are not close. She is busy with work and does not talk to him much. Hans feels like an outsider in his family.",
+    "explanation_json": {
+      "why_correct": "This answer describes the distant relationship between Hans and his mother.",
+      "key_understanding": "Family relationships can be complicated and not always close."
+    },
+    "explanation_steps": [
+      "Step 1: Read the text about Hans calling his mother.",
+      "Step 2: Look for clues about how they talk to each other.",
+      "Step 3: Think about other parts of the book that show their relationship.",
+      "Step 4: Write about how they feel about each other.",
+      "Step 5: Use examples from the text to support your ideas."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 4,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  },
+  {
+    "topic": "German Literature",
+    "subtopic": "Thomas Brussig: Am kürzeren Ende der Sonnenallee",
+    "question_text": "Interpretieren Sie den Textausschnitt in Bezug auf Michas Charakter und die weitere Entwicklung der Beziehung zwischen Micha und Miriam.",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Students should interpret Micha's character and how his relationship with Miriam develops, based on the text excerpt.",
+    "model_answer": "Micha is shy but tries hard to be with Miriam. He is happy when he dances with her, but he is not good at dancing. Their relationship has ups and downs.",
+    "explanation_json": {
+      "why_correct": "This answer talks about Micha's feelings and how he and Miriam get along.",
+      "key_understanding": "Relationships can be happy and challenging at the same time."
+    },
+    "explanation_steps": [
+      "Step 1: Read the text about Micha and Miriam at the dance school.",
+      "Step 2: Look for words that show how Micha acts and feels.",
+      "Step 3: Think about what might happen next in their relationship.",
+      "Step 4: Write about Micha's character and his relationship with Miriam.",
+      "Step 5: Use examples from the text to support your ideas."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 3,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  },
+  {
+    "topic": "German Literature",
+    "subtopic": "Hans Fallada: Kleiner Mann – was nun?",
+    "question_text": "„Hoffnung ist ein wichtiges Motiv in Kleiner Mann – was nun?“ Stimmen Sie zu? Begründen Sie Ihre Antwort mit relevanten Textstellen aus dem Roman.",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Students should agree or disagree that hope is an important theme in the book and give reasons with examples from the text.",
+    "model_answer": "Yes, hope is important. The characters keep hoping for a better life even when things are hard. This helps them keep going.",
+    "explanation_json": {
+      "why_correct": "This answer agrees with the statement and gives a reason why.",
+      "key_understanding": "Hope can help people during difficult times."
+    },
+    "explanation_steps": [
+      "Step 1: Read the question about hope in the book.",
+      "Step 2: Think about if the characters have hope.",
+      "Step 3: Look for parts of the book that show hope.",
+      "Step 4: Decide if you agree or disagree.",
+      "Step 5: Write your answer with examples from the book."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 4,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  },
+  {
+    "topic": "German Literature",
+    "subtopic": "Hans Fallada: Kleiner Mann – was nun?",
+    "question_text": "Inwiefern ist Kleiner Mann – was nun? ein Buch seiner Entstehungszeit? Begründen Sie Ihre Antwort mit relevanten Beispielen aus dem Roman.",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Students should explain how the book reflects the time when it was written, using examples from the novel.",
+    "model_answer": "The book shows life during hard economic times. It talks about jobs, money, and family struggles that were common then.",
+    "explanation_json": {
+      "why_correct": "This answer connects the book to the time it was written.",
+      "key_understanding": "Books can show what life was like in the past."
+    },
+    "explanation_steps": [
+      "Step 1: Read the question about the book and its time.",
+      "Step 2: Think about when the book was written.",
+      "Step 3: Look for parts of the book that show life at that time.",
+      "Step 4: Write about how the book reflects its time.",
+      "Step 5: Use examples from the book to support your ideas."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 4,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  },
+  {
+    "topic": "German Literature",
+    "subtopic": "Yadé Kara: Selam Berlin",
+    "question_text": "„Ich war wie ein Flummiball, sprang zwischen Osten und Westen hin und her, ha.“ Was sagt dieses Zitat über Hasan und seine Lebenseinstellung aus? Unterstützen Sie Ihre Antwort mit Beispielen aus dem Buch.",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Students should explain what the quote says about Hasan and his attitude to life, with examples from the book.",
+    "model_answer": "The quote shows Hasan moves between East and West Berlin. He is flexible and tries to fit in both places. He does not stay in one place.",
+    "explanation_json": {
+      "why_correct": "This answer explains the quote and what it means about Hasan.",
+      "key_understanding": "People can adapt to different places and situations."
+    },
+    "explanation_steps": [
+      "Step 1: Read the quote about Hasan.",
+      "Step 2: Think about what a Flummiball does.",
+      "Step 3: Look for parts of the book that show Hasan moving between places.",
+      "Step 4: Write about Hasan's attitude to life.",
+      "Step 5: Use examples from the book to support your ideas."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 3,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  },
+  {
+    "topic": "German Literature",
+    "subtopic": "Yadé Kara: Selam Berlin",
+    "question_text": "Inwiefern ist Hasans Suche nach Anerkennung und Wertschätzung zentral in Selam Berlin? Begründen Sie Ihre Meinung mit Beispielen aus dem Buch.",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Students should explain how Hasan's search for recognition and appreciation is central to the book, with examples.",
+    "model_answer": "Hasan wants people to see and value him. He tries hard to be accepted in different groups. This is a big part of his story.",
+    "explanation_json": {
+      "why_correct": "This answer talks about Hasan's desire for recognition.",
+      "key_understanding": "Everyone wants to feel valued and accepted."
+    },
+    "explanation_steps": [
+      "Step 1: Read the question about Hasan's search.",
+      "Step 2: Think about why recognition is important to Hasan.",
+      "Step 3: Look for parts of the book where Hasan seeks appreciation.",
+      "Step 4: Write about how this is central to the book.",
+      "Step 5: Use examples from the book to support your ideas."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 4,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  },
+  {
+    "topic": "German Literature",
+    "subtopic": "Ferdinand von Schirach: Terror: Ein Theaterstück und eine Rede",
+    "question_text": "Die Staatsanwältin fragt in ihrem Schlussplädoyer: „Dürfen wir Unschuldige töten, um andere Unschuldige zu retten?“ Inwiefern gibt das Buch eine klare Antwort auf diese Frage?",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Students should explain whether the book gives a clear answer to the question about killing innocent people to save others.",
+    "model_answer": "The book does not give one clear answer. It shows different opinions and lets readers think about it themselves.",
+    "explanation_json": {
+      "why_correct": "This answer says the book does not have a single answer.",
+      "key_understanding": "Some questions do not have easy answers, and books can make us think."
+    },
+    "explanation_steps": [
+      "Step 1: Read the question from the book.",
+      "Step 2: Think about what the book says about this question.",
+      "Step 3: Look for parts of the book that discuss it.",
+      "Step 4: Decide if the book gives a clear answer.",
+      "Step 5: Write your answer with examples from the book."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 5,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  },
+  {
+    "topic": "German Literature",
+    "subtopic": "Ferdinand von Schirach: Terror: Ein Theaterstück und eine Rede",
+    "question_text": "Terror: Ein Theaterstück und eine Rede bietet zwei mögliche Urteile an. Was halten Sie davon, dass es ein offenes Ende gibt? Begründen Sie Ihre Antwort.",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Students should give their opinion on the open ending with two possible judgments and justify it.",
+    "model_answer": "An open ending is good because it makes readers think. It shows that life does not always have clear answers.",
+    "explanation_json": {
+      "why_correct": "This answer gives an opinion and a reason for it.",
+      "key_understanding": "Open endings can make stories more interesting and thoughtful."
+    },
+    "explanation_steps": [
+      "Step 1: Read the question about the open ending.",
+      "Step 2: Think about what an open ending means.",
+      "Step 3: Decide if you like it or not.",
+      "Step 4: Write your opinion and why you think that.",
+      "Step 5: Use examples from the book to support your ideas."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 4,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  },
+  {
+    "topic": "German Language & Literature",
+    "subtopic": "Essay Writing",
+    "question_text": "„Um die Welt zu verändern, müssen die Älteren mehr auf die Jüngeren hören.“ Diskutieren Sie, was für und gegen diese Aussage spricht.",
+    "question_type": "open_text",
+    "options_json": null,
+    "correct_answer": "Write an essay of 300-400 words in German discussing arguments for and against the statement: \"To change the world, older people need to listen more to younger people.\"",
+    "model_answer": "Students should write a balanced essay in German discussing both sides. For the statement: Younger people bring fresh ideas, understand modern problems like climate change and technology, and have energy for change. Against the statement: Older people have experience and wisdom from living longer, they understand history and consequences better, and sometimes young ideas are not practical. The essay should have clear arguments for both sides.",
+    "explanation_json": {
+      "why_correct": "This is correct because the question asks to discuss what speaks for and against the statement. A good answer talks about both sides.",
+      "key_understanding": "You need to give reasons why older people should listen to younger people AND reasons why they might not need to."
+    },
+    "explanation_steps": [
+      "Step 1: Read the question carefully. It says: \"To change the world, older people need to listen more to younger people.\"",
+      "Step 2: Think about reasons why this might be true. Younger people know about new things like computers and climate change.",
+      "Step 3: Think about reasons why this might not be true. Older people have lived longer and know more from experience.",
+      "Step 4: Write your essay in German. Start with an introduction that says you will talk about both sides.",
+      "Step 5: Write one paragraph with reasons FOR the statement. Give 2-3 good reasons.",
+      "Step 6: Write another paragraph with reasons AGAINST the statement. Give 2-3 good reasons.",
+      "Step 7: Write a conclusion that says both sides have good points and what you think."
+    ],
+    "key_points_json": [],
+    "marks": 20,
+    "difficulty": 4,
+    "time_estimate": 5,
+    "subject_code": "0580",
+    "source": "past-paper-extracted",
+    "_is_authentic": true
+  }
+]

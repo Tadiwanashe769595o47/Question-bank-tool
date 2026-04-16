@@ -26,6 +26,7 @@ export interface Question {
     key_understanding: string;
     [key: string]: any;
   };
+  explanation_steps: string[];
   key_points_json: string[];
   marks: number;
   diagram_url?: string;
